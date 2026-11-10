@@ -73,4 +73,4 @@ Issues and pull requests are welcome. If you change the database, update `sql/sc
 
 [MIT](LICENSE) © 2026 Dan Crowder
 
-*Built with the help of an AI assistant (Claude by Anthropic). Not affiliated with ProBoards, phpBB, or any other forum software.*
+*Built with the help of an AI assistant (Claude by Anthropic). Not affiliated with any other forum software.*
