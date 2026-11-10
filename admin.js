@@ -1,5 +1,5 @@
-/* CrowderBoard Admin Center — loaded after app.js and replaces its viewAdmin().
-   Adds rename/edit and up/down reordering for categories and boards. */
+/* CrowderBoard Admin Center: boards & categories, member roles, Look & Feel.
+   Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 function adminTabs(active) {
   const t = (key, label) => `<a class="btn ${active === key ? '' : 'grey'}" href="#/admin${key === 'boards' ? '' : '?tab=' + key}">${label}</a>`;
   return `<div class="btnbar"><div>${t('boards', 'Boards &amp; Members')} ${t('look', 'Look &amp; Feel')}</div></div>`;
@@ -9,10 +9,9 @@ async function viewAdmin() {
   if (!isAdmin()) return render(err('Administrators only.'));
   if (/[?&]tab=look/.test(location.hash)) return viewAdminLook();
   loading();
-  const [cats, boards, staff] = await Promise.all([
+  const [cats, boards] = await Promise.all([
     sb.from('forum_categories').select('*').order('sort').order('id'),
     sb.from('forum_boards').select('*').order('sort').order('id'),
-    sb.from('forum_profiles').select(PROF).in('role', ['admin', 'mod', 'banned']).order('role'),
   ]);
   if (cats.error || boards.error) return render(err(cats.error || boards.error));
   const C = cats.data, B = boards.data;
@@ -48,11 +47,12 @@ async function viewAdmin() {
     <tr><td class="lbl">Description:</td><td><input type="text" id="bdesc" style="width:500px"></td></tr>
     <tr><td class="lbl">Options:</td><td><label><input type="checkbox" id="bmod"> Only staff can start topics</label></td></tr>
     <tr><td class="lbl"></td><td><button class="btn sm" id="addboard">Add Board</button></td></tr></table>
-  <table class="tborder form"><tr><th colspan="2">Member Roles</th></tr>
-    <tr><td class="lbl">Current staff &amp; bans:</td><td>${(staff.data || []).map(p => `${uname(p)} <span class="small muted">(${p.role}${p.title ? ', "' + esc(p.title) + '"' : ''})</span>`).join('<br>') || '—'}</td></tr>
-    <tr><td class="lbl">Set role:</td><td><input type="text" id="ruser" placeholder="username" style="width:160px">
-      <select id="rrole"><option value="member">Member</option><option value="mod">Global Moderator</option><option value="admin">Administrator</option><option value="banned">Banned</option></select>
-      <input type="text" id="rtitle" placeholder="custom title (optional)" style="width:180px"> <button class="btn sm" id="setrole">Apply</button></td></tr></table>`);
+  <a id="roles"></a><table class="tborder form"><tr><th colspan="2">Member Roles &mdash; Find a Member</th></tr>
+    <tr><td class="lbl">Username contains:<div class="muted small">Leave blank to list current staff and bans</div></td>
+      <td><input type="text" id="af_q" style="width:220px"> <select id="af_role"><option value="">Any position</option><option value="admin">Administrators</option>
+        <option value="mod">Moderators</option><option value="member">Members</option><option value="banned">Banned</option></select>
+        <button class="btn sm" id="af_go">Find</button></td></tr></table>
+  <div id="af_results"></div>`);
 
   const msg = (h) => { document.getElementById('msg').innerHTML = h; window.scrollTo(0, 0); };
   const done = (error) => (error ? msg(err(error)) : viewAdmin());
@@ -133,13 +133,54 @@ async function viewAdmin() {
     e.preventDefault(); if (!confirm('Delete this category, its boards, and ALL their posts?')) return;
     const { error } = await sb.from('forum_categories').delete().eq('id', a.dataset.delcat); done(error);
   });
-  document.getElementById('setrole').onclick = async () => {
-    const name = document.getElementById('ruser').value.trim();
-    const { data: u } = await sb.from('forum_profiles').select('id').ilike('username', name.replace(/[_%]/g, '\\$&')).maybeSingle();
-    if (!u) return msg(err('No member with that username.'));
-    const { error } = await sb.rpc('forum_set_role', { p_user: u.id, p_role: document.getElementById('rrole').value, p_title: document.getElementById('rtitle').value.trim() || null });
-    done(error);
-  };
+  const af = { page: 1 };
+  const runFind = () => { af.term = document.getElementById('af_q').value.trim(); af.role = document.getElementById('af_role').value; af.page = 1; loadMemberFinder(af); };
+  document.getElementById('af_go').onclick = runFind;
+  document.getElementById('af_q').onkeydown = (e) => { if (e.key === 'Enter') runFind(); };
+  document.getElementById('af_role').onchange = runFind;
+  loadMemberFinder(af);
+}
+
+/* ---- Member finder used in Admin -> Member Roles ---- */
+async function loadMemberFinder(af) {
+  const box = document.getElementById('af_results'); if (!box) return;
+  box.innerHTML = '<div class="loading">Searching members...</div>';
+  const per = 25, cols = 'id,username,role,title,post_count,created_at,last_seen';
+  let res;
+  if (!af.term && !af.role) {
+    res = await sb.from('forum_profiles').select(cols, { count: 'exact' }).in('role', ['admin', 'mod', 'banned'])
+      .order('role').order('username').range((af.page - 1) * per, af.page * per - 1);
+  } else {
+    res = await findMembers({ term: af.term, role: af.role, sort: 'name', page: af.page, per, cols });
+  }
+  if (res.error) { box.innerHTML = err(res.error); return; }
+  const rows = res.data || [], total = res.count || 0, pages = Math.max(1, Math.ceil(total / per));
+  const roleSel = (m) => `<select data-role="${m.id}">${[['member', 'Member'], ['mod', 'Global Moderator'], ['admin', 'Administrator'], ['banned', 'Banned']]
+    .map(([v, l]) => `<option value="${v}"${m.role === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+  box.innerHTML = `<table class="tborder"><tr><th>Username</th><th class="num">Posts</th><th style="width:110px">Joined</th><th style="width:160px">Position</th><th style="width:190px">Custom title</th><th style="width:70px"></th></tr>
+    ${rows.length ? rows.map((m, i) => { const c = i % 2 ? 'w2' : 'w1'; return `<tr data-row="${m.id}"><td class="${c}">${uname(m)}${state.me && m.id === state.me.id ? ' <span class="small muted">(you)</span>' : ''}</td>
+      <td class="${c} num">${m.post_count}</td><td class="${c} small">${fmtDay(m.created_at)}</td><td class="${c}">${roleSel(m)}</td>
+      <td class="${c}"><input type="text" data-title="${m.id}" value="${esc(m.title || '')}" maxlength="40" placeholder="(rank default)" style="width:170px"></td>
+      <td class="${c} ctr"><button class="btn sm" data-save="${m.id}">Save</button></td></tr>`; }).join('')
+      : `<tr><td colspan="6" class="w1 ctr" style="padding:16px">${!af.term && !af.role ? 'No staff or banned members yet. Search for a username above.' : 'No members match that search.'}</td></tr>`}
+  </table>
+  <div class="btnbar"><div class="small muted">${total} found${!af.term && !af.role ? ' (staff &amp; banned)' : ''}</div>
+    <div>${pages > 1 ? `<button class="btn sm grey" id="af_prev"${af.page <= 1 ? ' disabled' : ''}>&laquo; Prev</button> <span class="small">Page ${af.page} of ${pages}</span> <button class="btn sm grey" id="af_next"${af.page >= pages ? ' disabled' : ''}>Next &raquo;</button>` : ''}</div></div>`;
+  const prev = document.getElementById('af_prev'), next = document.getElementById('af_next');
+  if (prev) prev.onclick = () => { if (af.page > 1) { af.page--; loadMemberFinder(af); } };
+  if (next) next.onclick = () => { if (af.page < pages) { af.page++; loadMemberFinder(af); } };
+  box.querySelectorAll('[data-save]').forEach(btn => btn.onclick = async () => {
+    const id = btn.dataset.save, m = rows.find(x => x.id === id);
+    const role = box.querySelector(`[data-role="${id}"]`).value, title = box.querySelector(`[data-title="${id}"]`).value.trim();
+    if (state.me && id === state.me.id && role !== 'admin' && !confirm('You are about to remove your own Administrator access. Continue?')) return;
+    if (role === 'banned' && m.role !== 'banned' && !confirm(`Ban ${m.username}? They will no longer be able to post, send messages, or edit their profile.`)) return;
+    btn.disabled = true;
+    // An empty title clears it (members then show their post-count rank).
+    const { error } = await sb.rpc('forum_set_role', { p_user: id, p_role: role, p_title: title });
+    btn.disabled = false;
+    if (error) { box.insertAdjacentHTML('afterbegin', err(error)); return; }
+    btn.textContent = 'Saved!'; setTimeout(() => loadMemberFinder(af), 700);
+  });
 }
 
 /* ================= Look & Feel ================= */

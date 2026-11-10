@@ -1,4 +1,4 @@
-/* CrowderBoard v1.0 — a classic message board on Supabase.
+/* CrowderBoard v1.1 — a classic message board on Supabase.
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 const SB_URL = (window.CROWDERBOARD_CONFIG || {}).supabaseUrl;
 const SB_KEY = (window.CROWDERBOARD_CONFIG || {}).supabaseKey;
@@ -51,7 +51,7 @@ function pager(base, page, pages) {
   let out = `<span class="pages">Pages: `;
   for (let i = 1; i <= pages; i++) {
     if (pages > 9 && i > 2 && i < pages - 1 && Math.abs(i - page) > 2) { if (!out.endsWith('... ')) out += '... '; continue; }
-    out += i === page ? `<b>${i}</b>` : `<a href="${base}?page=${i}">${i}</a>`;
+    out += i === page ? `<b>${i}</b>` : `<a href="${base}${base.includes('?') ? '&' : '?'}page=${i}">${i}</a>`;
   }
   return out + '</span>';
 }
@@ -161,7 +161,7 @@ function pingSeen() {
 }
 function drawChrome(active) {
   const n = (href, label, icon, key) => `<a href="${href}" class="${active === key ? 'on' : ''}">${icon ? img(icon) : ''}${label}</a>`;
-  let nav = n('#/', 'Home', '', 'home') + n('#/members', 'Members', '', 'members');
+  let nav = n('#/', 'Home', '', 'home') + n('#/search', 'Search', '', 'search') + n('#/members', 'Members', '', 'members');
   if (state.me) {
     nav += n('#/pm', `Inbox${state.pmUnread ? ` (${state.pmUnread})` : ''}`, state.pmUnread ? ICON.misc.pmnew : '', 'pm');
     nav += n('#/editprofile', 'Profile', '', 'profile');
@@ -177,16 +177,19 @@ function drawChrome(active) {
   if (lo) lo.onclick = async (e) => { e.preventDefault(); await sb.auth.signOut(); await loadMe(); if (location.hash === '#/' || location.hash === '') route(); else location.hash = '#/'; };
   const w = document.getElementById('welcome');
   const date = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const quick = `<span class="quicksearch"><input type="text" id="qs" placeholder="Search posts..." maxlength="200"> <button class="btn sm blue" id="qsgo">Go</button> &nbsp; ${date}</span>`;
   if (state.me) {
-    w.innerHTML = `<span>Hey, <b>${esc(state.me.username)}</b>! You have <a href="#/pm">${state.pmUnread} new message${state.pmUnread === 1 ? '' : 's'}</a>. &nbsp;<a href="#" id="markall">Mark all as read</a></span><span>${date}</span>`;
+    w.innerHTML = `<span>Hey, <b>${esc(state.me.username)}</b>! You have <a href="#/pm">${state.pmUnread} new message${state.pmUnread === 1 ? '' : 's'}</a>. &nbsp;<a href="#" id="markall">Mark all as read</a></span>${quick}`;
     document.getElementById('markall').onclick = async (e) => {
       e.preventDefault();
       await sb.from('forum_profiles').update({ mark_read_at: new Date().toISOString() }).eq('id', state.me.id);
       await refreshUnread(); route();
     };
   } else {
-    w.innerHTML = `<span>Hey, <b>Guest</b>. Please <a href="#/login">login</a> or <a href="#/register">register</a>.</span><span>${date}</span>`;
+    w.innerHTML = `<span>Hey, <b>Guest</b>. Please <a href="#/login">login</a> or <a href="#/register">register</a>.</span>${quick}`;
   }
+  const qs = document.getElementById('qs'), qgo = () => { if (qs.value.trim()) location.hash = '#/search?q=' + encodeURIComponent(qs.value.trim()); };
+  document.getElementById('qsgo').onclick = qgo; qs.onkeydown = (e) => { if (e.key === 'Enter') qgo(); };
 }
 
 /* ================= views ================= */
@@ -330,6 +333,7 @@ async function viewThread(id, q) {
   const ta = document.getElementById('ta_reply');
   $main.querySelectorAll('[data-act="jump-reply"]').forEach(a => a.onclick = (e) => { e.preventDefault(); ta?.scrollIntoView({ behavior: 'smooth' }); ta?.focus(); });
   if (q.page === 'last' && posts.length) document.getElementById('p' + posts[posts.length - 1].id)?.scrollIntoView();
+  if (q.post) { const hit = document.getElementById('p' + q.post); if (hit) { hit.classList.add('hit'); hit.scrollIntoView({ block: 'center' }); } }
   $main.querySelectorAll('[data-act="quote"]').forEach(a => a.onclick = (e) => {
     e.preventDefault(); const p = posts.find(x => x.id == a.dataset.id);
     ta.value += `[quote=${p.author?.username || 'Guest'}]${p.body}[/quote]\n`; ta.scrollIntoView({ behavior: 'smooth' }); ta.focus();
@@ -544,18 +548,7 @@ async function viewEditProfile() {
     window.scrollTo(0, 0);
   };
 }
-async function viewMembers(q) {
-  drawChrome('members'); loading();
-  const page = Math.max(1, +q.page || 1), per = 30;
-  const { data, count, error } = await sb.from('forum_profiles').select('id,username,role,post_count,title,created_at,location,last_seen', { count: 'exact' })
-    .order('post_count', { ascending: false }).order('created_at').range((page - 1) * per, page * per - 1);
-  if (error) return render(err(error));
-  const pages = Math.max(1, Math.ceil(count / per)), since = new Date(Date.now() - 15 * 60000);
-  render(crumb(['Members List']) + `<div class="btnbar">${pager('#/members', page, pages)}</div><table class="tborder">
-    <tr><th class="icon-col"></th><th>Username</th><th>Position</th><th>Location</th><th class="num">Posts</th><th style="width:130px">Joined</th></tr>
-    ${data.map((p, i) => { const r = rank(p), c = i % 2 ? 'w2' : 'w1'; return `<tr class="hl"><td class="${c} icon-col">${img(new Date(p.last_seen) > since ? ICON.misc.online : ICON.misc.offline)}</td><td class="${c}">${uname(p)}</td><td class="${c} small">${esc(r.name)} ${stars(r.stars)}</td><td class="${c} small">${esc(p.location || '')}</td><td class="${c} num">${p.post_count}</td><td class="${c} small">${fmtDay(p.created_at)}</td></tr>`; }).join('')}
-  </table>`);
-}
+/* viewMembers: see search.js */
 
 /* ---------- private messages ---------- */
 async function viewInbox(q) {
@@ -641,6 +634,7 @@ async function route() {
   if (path === '#/newpass') return viewNewPass();
   if (path === '#/editprofile') return viewEditProfile();
   if (path === '#/members') return viewMembers(q);
+  if (path === '#/search') return viewSearch(q);
   if (path === '#/admin') return viewAdmin();
   if (path === '#/pm') return viewInbox(q);
   if (path === '#/pm/new') return viewCompose(q);

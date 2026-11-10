@@ -12,11 +12,13 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
 - **Topics & replies** with paging, sticky/locked/hot topic folders, view counts, and new-post indicators
 - **BBCode editor** — bold, italic, links, images, quotes (nested), code, lists, colors, sizes — plus a smilies bar
 - **Member profiles** — avatar, signature, location, post count, rank titles and stars
+- **Search** — full-text search across posts and topic titles with phrase/exclude syntax, filters for board, author and titles-only, highlighted snippets, and jump-to-post links; quick search box on every page
+- **Members list** with search by username, filter by position, and sorting
 - **Private messages** with inbox, sent items and reply-with-quote
 - **Moderation** — sticky, lock, move and delete topics; edit/delete any post
 - **Admin Center**
   - Add, rename, reorder and delete categories and boards; staff-only boards (e.g. Announcements)
-  - Promote members to Moderator/Administrator, give custom titles, ban users
+  - Find any member by name and change their position (Member, Moderator, Administrator, Banned) and custom title right from the results
   - **Look & Feel**: forum name, banner (classic text logo, image, or custom HTML), five theme presets plus 25 color pickers, fonts, custom CSS, and site-wide header/footer HTML — all with live preview
 - Original period-style icon set (folders, message icons, smilies) drawn as inline SVG — no image files to host
 
@@ -32,7 +34,7 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
 3. **Configure the forum.** In Supabase go to **Project Settings → API** and copy the **Project URL** and the **publishable / anon key**. Paste them into [`config.js`](config.js).
    > Only ever use the *publishable* (anon) key. **Never** put the `service_role` / secret key in `config.js` — it bypasses all security rules.
 4. **Set login redirects.** In Supabase go to **Authentication → URL Configuration** and set **Site URL** to your forum's address (e.g. `https://example.com/forum/`). Add it under **Redirect URLs** too. This makes email confirmation and password-reset links come back to the forum.
-5. **Upload the files** (`index.html`, `config.js`, `style.css`, `icons.js`, `theme.js`, `app.js`, `admin.js`) to your web host.
+5. **Upload the files** (`index.html`, `config.js`, `style.css`, `icons.js`, `theme.js`, `app.js`, `search.js`, `admin.js`) to your web host.
 6. **Make yourself admin.** Open the forum, click **Register**, and create your account. Then run [`sql/make_admin.sql`](sql/make_admin.sql) in the SQL Editor with your username filled in. Refresh — an **Admin** link appears in the nav bar.
 
 That's it. Customize everything else from **Admin → Look & Feel** and **Admin → Boards & Members**.
@@ -53,7 +55,8 @@ That's it. Customize everything else from **Admin → Look & Feel** and **Admin 
 | `icons.js` | The SVG icon set |
 | `theme.js` | Loads site settings; renders the banner, theme colors, custom CSS/HTML; HTML sanitizer |
 | `app.js` | The forum: routing, boards, topics, posting, profiles, PMs, login |
-| `admin.js` | Admin Center (boards, roles, Look & Feel) |
+| `search.js` | Forum search and the searchable Members list |
+| `admin.js` | Admin Center (boards, member roles, Look & Feel) |
 | `sql/schema.sql` | Database tables, triggers, functions and row-level security |
 
 The browser talks directly to Supabase. **All permissions are enforced inside the database** with Postgres row-level security, column-level grants and a few `SECURITY DEFINER` functions — hiding a button in the UI is never what keeps someone out. See [SECURITY.md](SECURITY.md) for the model and its known limits.
@@ -64,6 +67,10 @@ The browser talks directly to Supabase. **All permissions are enforced inside th
 - **Topics/posts per page and the "hot topic" threshold:** constants at the top of `app.js`
 - **Theme presets:** `THEME_PRESETS` in `theme.js`
 - **Icons:** `icons.js` — each icon is a small SVG you can edit
+
+## Upgrading
+
+When a release adds database changes, run the matching file in [`sql/migrations/`](sql/migrations) once in the SQL Editor, then upload the new files. For example, forums installed with v1.0 need `sql/migrations/v1.1_search.sql` for search.
 
 ## Contributing
 

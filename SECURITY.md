@@ -6,7 +6,7 @@ CrowderBoard is a static web app that talks directly to Supabase with the public
 
 | Who | Can | Cannot |
 |---|---|---|
-| **Guests** | Read boards, topics, posts, profiles, site settings; bump view counts | Post, read private messages, change anything |
+| **Guests** | Read and search boards, topics, posts, profiles, site settings; bump view counts | Post, read private messages, change anything |
 | **Members** | Start topics (not in staff-only boards), reply to unlocked topics, edit their own posts, delete their own replies, edit their own avatar/signature/location, send and delete their own PMs | Change their role, title or post count; edit others' posts or profiles; read others' PMs; create boards; change site settings; backdate posts or messages |
 | **Banned members** | Read like a guest | Post, send PMs, or change their profile |
 | **Moderators** | Everything members can, plus lock/sticky/move/delete topics and edit/delete any post; reply to locked topics | Change roles, boards or site settings |
