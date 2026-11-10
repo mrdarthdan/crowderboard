@@ -16,10 +16,12 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
 - **Members list** with search by username, filter by position, and sorting
 - **Private messages** with inbox, sent items and reply-with-quote
 - **Moderation** — sticky, lock, move and delete topics; edit/delete any post
+- **Board moderators** — admins and global moderators can make any member the Moderator of a single board or a whole category; they get moderation powers there only, and are listed under each board on the index
 - **Admin Center**
+  - Assign board/category moderators (global moderators get a Mod CP with just this section)
   - Add, rename, reorder and delete categories and boards; staff-only boards (e.g. Announcements)
-  - Find any member by name and change their position (Member, Moderator, Administrator, Banned) and custom title right from the results
-  - **Look & Feel**: forum name, banner (classic text logo, image, or custom HTML), five theme presets plus 25 color pickers, fonts, custom CSS, and site-wide header/footer HTML — all with live preview
+  - Find any member by name and change their position (Member, Global Moderator, Administrator, Banned) and custom title right from the results
+  - **Look & Feel**: forum name, banner (classic text logo, image URL, uploaded JPG, or custom HTML), username colors for each position (Administrator, Global Moderator, Moderator, Member), five theme presets plus 25 color pickers, fonts, custom CSS, and site-wide header/footer HTML — all with live preview
 - Original period-style icon set (folders, message icons, smilies) drawn as inline SVG — no image files to host
 
 ## Requirements
@@ -36,6 +38,10 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
 4. **Set login redirects.** In Supabase go to **Authentication → URL Configuration** and set **Site URL** to your forum's address (e.g. `https://example.com/forum/`). Add it under **Redirect URLs** too. This makes email confirmation and password-reset links come back to the forum.
 5. **Upload the files** (`index.html`, `config.js`, `style.css`, `icons.js`, `theme.js`, `app.js`, `search.js`, `admin.js`) to your web host.
 6. **Make yourself admin.** Open the forum, click **Register**, and create your account. Then run [`sql/make_admin.sql`](sql/make_admin.sql) in the SQL Editor with your username filled in. Refresh — an **Admin** link appears in the nav bar.
+
+### Banner image size
+
+To use a picture as the banner, go to **Admin → Look & Feel → Banner → Upload JPG**. Make it **1080 × 150 pixels** (a 7.2 : 1 strip). Larger or differently shaped images are scaled and center-cropped to exactly 1080 × 150 in the browser before upload, and then re-compressed to stay under 1.5 MB. Uploads go to a public Supabase Storage bucket called `forum-assets` that only administrators can write to.
 
 That's it. Customize everything else from **Admin → Look & Feel** and **Admin → Boards & Members**.
 
@@ -70,7 +76,12 @@ The browser talks directly to Supabase. **All permissions are enforced inside th
 
 ## Upgrading
 
-When a release adds database changes, run the matching file in [`sql/migrations/`](sql/migrations) once in the SQL Editor, then upload the new files. For example, forums installed with v1.0 need `sql/migrations/v1.1_search.sql` for search.
+When a release adds database changes, run the matching file in [`sql/migrations/`](sql/migrations) once in the SQL Editor, then upload the new files. Run them in order, skipping any you've already applied:
+
+- `sql/migrations/v1.1_search.sql` — forum and member search (for forums installed with v1.0)
+- `sql/migrations/v1.2_board_mods_banner.sql` — board/category moderators and banner JPG uploads (for forums installed before v1.2)
+
+Username colors need no database change.
 
 ## Contributing
 

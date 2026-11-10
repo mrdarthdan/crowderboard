@@ -90,7 +90,7 @@ async function viewMembers(q) {
   const sel = (v, cur, label) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
   render(crumb(['Members List']) + `<table class="tborder form"><tr><th colspan="2">Find a Member</th></tr>
     <tr><td class="lbl">Username contains:</td><td><input type="text" id="mq" value="${esc(term)}" style="width:220px">
-      <select id="mrole">${sel('', role, 'Any position')}${sel('admin', role, 'Administrators')}${sel('mod', role, 'Moderators')}${sel('member', role, 'Members')}${sel('banned', role, 'Banned')}</select>
+      <select id="mrole">${sel('', role, 'Any position')}${sel('admin', role, 'Administrators')}${sel('mod', role, 'Global Moderators')}${sel('boardmod', role, 'Moderators')}${sel('member', role, 'Members')}${sel('banned', role, 'Banned')}</select>
       <select id="msort">${sel('posts', sort, 'Most posts')}${sel('name', sort, 'Username A-Z')}${sel('newest', sort, 'Newest members')}${sel('active', sort, 'Recently active')}</select>
       <button class="btn" id="mgo">Search</button>${term || role ? ` <a href="#/members" class="small">Clear</a>` : ''}</td></tr></table>
     <div class="btnbar"><div class="small muted">${count || 0} member${count === 1 ? '' : 's'} found</div><div>${pager(base, page, pages)}</div></div>

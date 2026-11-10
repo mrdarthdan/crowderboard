@@ -1,4 +1,4 @@
-/* CrowderBoard v1.1 — a classic message board on Supabase.
+/* CrowderBoard v1.2 — a classic message board on Supabase.
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 const SB_URL = (window.CROWDERBOARD_CONFIG || {}).supabaseUrl;
 const SB_KEY = (window.CROWDERBOARD_CONFIG || {}).supabaseKey;
@@ -9,7 +9,7 @@ if (!SB_URL || !SB_KEY || /YOUR-/.test(SB_URL + SB_KEY)) {
 const TOPICS_PER_PAGE = 20, POSTS_PER_PAGE = 15, HOT_REPLIES = 15;
 const sb = supabase.createClient(SB_URL, SB_KEY);
 
-const state = { session: null, me: null, unreadThreads: new Set(), unreadBoards: new Set(), pmUnread: 0, lastSeenPing: 0 };
+const state = { session: null, me: null, myMods: [], unreadThreads: new Set(), unreadBoards: new Set(), pmUnread: 0, lastSeenPing: 0 };
 const $main = document.getElementById('main');
 const PROF = 'id,username,role,avatar_url,post_count,title';
 
@@ -19,6 +19,15 @@ const img = (src, alt = '', cls = '', title = '') => `<img src="${src}" alt="${e
 const isMod = () => state.me && ['admin', 'mod'].includes(state.me.role);
 const isAdmin = () => state.me && state.me.role === 'admin';
 const canPost = () => state.me && state.me.role !== 'banned';
+/* Can I moderate this board? Admins/global mods: everywhere. Board moderators: their boards or categories. */
+const canModBoard = (boardId, catId) => isMod() || (state.me?.role === 'boardmod' &&
+  state.myMods.some(m => (m.board_id && m.board_id == boardId) || (m.category_id && m.category_id == catId)));
+async function loadMyMods() {
+  state.myMods = [];
+  if (state.me?.role !== 'boardmod') return;
+  const { data } = await sb.from('forum_board_mods').select('board_id,category_id').eq('user_id', state.me.id);
+  state.myMods = data || [];
+}
 function uname(p) {
   if (!p) return '<i class="muted">Guest</i>';
   return `<a class="u u-${esc(p.role)}" href="#/profile/${p.id}">${esc(p.username)}</a>`;
@@ -37,6 +46,7 @@ const fmtDay = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short'
 function rank(p) {
   if (p.role === 'admin') return { name: p.title || 'Administrator', stars: 5 };
   if (p.role === 'mod') return { name: p.title || 'Global Moderator', stars: 5 };
+  if (p.role === 'boardmod') return { name: p.title || 'Moderator', stars: 4 };
   if (p.role === 'banned') return { name: 'Banned', stars: 0 };
   const tiers = [[500, 'Forum Legend', 5], [250, 'Senior Member', 4], [100, 'Full Member', 3], [25, 'Junior Member', 2], [0, 'Newbie', 1]];
   const t = tiers.find(([n]) => p.post_count >= n);
@@ -142,7 +152,7 @@ async function loadMe() {
     const { data: p } = await sb.from('forum_profiles').select('*').eq('id', state.session.user.id).maybeSingle();
     state.me = p;
   }
-  await refreshUnread();
+  await Promise.all([refreshUnread(), loadMyMods()]);
 }
 async function refreshUnread() {
   state.unreadThreads = new Set(); state.unreadBoards = new Set(); state.pmUnread = 0;
@@ -166,6 +176,7 @@ function drawChrome(active) {
     nav += n('#/pm', `Inbox${state.pmUnread ? ` (${state.pmUnread})` : ''}`, state.pmUnread ? ICON.misc.pmnew : '', 'pm');
     nav += n('#/editprofile', 'Profile', '', 'profile');
     if (isAdmin()) nav += n('#/admin', 'Admin', '', 'admin');
+    else if (isMod()) nav += n('#/admin', 'Mod CP', '', 'admin');
     nav += `<a href="#" id="logout">Logout</a>`;
   } else if (state.session) {
     nav += n('#/setup', 'Finish Sign-up', '', 'setup') + `<a href="#" id="logout">Logout</a>`;
@@ -196,14 +207,20 @@ function drawChrome(active) {
 async function viewIndex() {
   drawChrome('home'); loading();
   const since = new Date(Date.now() - 15 * 60000).toISOString();
-  const [cats, boards, members, newest, online] = await Promise.all([
+  const [cats, boards, members, newest, online, bmods] = await Promise.all([
     sb.from('forum_categories').select('*').order('sort'),
     sb.from('forum_boards').select(`*, lp:forum_profiles!forum_boards_last_post_user_id_fkey(${PROF})`).order('sort'),
     sb.from('forum_profiles').select('id', { count: 'exact', head: true }),
     sb.from('forum_profiles').select(PROF).order('created_at', { ascending: false }).limit(1),
     sb.from('forum_profiles').select(PROF).gte('last_seen', since).order('username'),
+    sb.from('forum_board_mods').select(`board_id, category_id, user:forum_profiles!forum_board_mods_user_id_fkey(${PROF})`),
   ]);
   if (cats.error || boards.error) return render(err(cats.error || boards.error));
+  const modsFor = (b) => {
+    const seen = new Set();
+    return (bmods.data || []).filter(m => m.user && (m.board_id === b.id || m.category_id === b.category_id))
+      .filter(m => !seen.has(m.user.id) && seen.add(m.user.id)).map(m => uname(m.user));
+  };
   const tids = boards.data.map(b => b.last_thread_id).filter(Boolean);
   const titles = {};
   if (tids.length) {
@@ -220,7 +237,7 @@ async function viewIndex() {
         ? `${lt ? `<a href="#/thread/${lt.id}?page=last"><b>${esc(lt.title.length > 32 ? lt.title.slice(0, 30) + '…' : lt.title)}</b></a> ${img(ICON.misc.lastpost, 'Go to last post')}<br>` : ''}by ${uname(b.lp)}<br>${fmtDate(b.last_post_at)}`
         : '<span class="muted">No posts yet</span>';
       html += `<tr class="hl"><td class="w2 icon-col">${img(on ? ICON.board.on : ICON.board.off, on ? 'New posts' : 'No new posts')}</td>
-        <td class="w1"><a class="bname" href="#/board/${b.id}">${esc(b.name)}</a><div class="bdesc">${esc(b.description || '')}</div></td>
+        <td class="w1"><a class="bname" href="#/board/${b.id}">${esc(b.name)}</a><div class="bdesc">${esc(b.description || '')}</div>${(() => { const ms = modsFor(b); return ms.length ? `<div class="small muted" style="margin-top:3px">Moderator${ms.length > 1 ? 's' : ''}: ${ms.join(', ')}</div>` : ''; })()}</td>
         <td class="w2 num">${b.thread_count}</td><td class="w2 num">${b.post_count}</td><td class="w1 lastpost">${last}</td></tr>`;
     }
   }
@@ -234,7 +251,7 @@ async function viewIndex() {
     <tr><td colspan="2" class="titlebg" style="font-size:10px;padding:3px 6px">Users Online</td></tr>
     <tr><td class="ic">${img(ICON.misc.users)}</td><td class="w1">${on.length} member${on.length === 1 ? '' : 's'} active in the past 15 minutes:<br>
       ${on.length ? on.map(uname).join(', ') : '<span class="muted">Nobody... it\'s quiet in here.</span>'}
-      <div class="small muted" style="margin-top:4px">Legend: <span class="u u-admin">Administrator</span>, <span class="u u-mod">Global Moderator</span>, <span class="u" style="color:var(--link)">Member</span></div></td></tr>
+      <div class="small muted" style="margin-top:4px">Legend: <span class="u u-admin">Administrator</span>, <span class="u u-mod">Global Moderator</span>, <span class="u u-boardmod">Moderator</span>, <span class="u u-member">Member</span></div></td></tr>
   </table>
   <div class="small muted legend ctr">${img(ICON.board.on).replace('<img', '<img width="20" height="20"')} New posts ${img(ICON.board.off).replace('<img', '<img width="20" height="20"')} No new posts</div>`;
   render(html);
@@ -252,7 +269,7 @@ async function viewBoard(id, q) {
   if (b.error || t.error) return render(err(b.error || t.error));
   if (!b.data) return render(err('That board does not exist.'));
   const board = b.data, pages = Math.max(1, Math.ceil((t.count || 0) / TOPICS_PER_PAGE));
-  const canNew = canPost() && (!board.mod_only_threads || isMod());
+  const canNew = canPost() && (!board.mod_only_threads || canModBoard(board.id, board.category_id));
   const bar = `<div class="btnbar"><div>${pager(`#/board/${id}`, page, pages)}</div><div>${canNew ? `<a class="btn" href="#/new/${id}">New Topic</a>` : (!state.me ? '<a class="btn grey" href="#/login">Login to post</a>' : '')}</div></div>`;
   let html = crumb([`<a href="#/board/${id}">${esc(board.name)}</a>`]) + bar;
   html += `<table class="tborder"><tr><th class="icon-col"></th><th class="icon-col"></th><th>Subject</th><th style="width:120px">Started by</th><th class="num">Replies</th><th class="num">Views</th><th class="lastpost">Last Post</th></tr>`;
@@ -274,7 +291,7 @@ async function viewBoard(id, q) {
 
 async function viewThread(id, q) {
   drawChrome(''); loading();
-  const { data: th, error } = await sb.from('forum_threads').select('*, board:forum_boards(id,name)').eq('id', id).maybeSingle();
+  const { data: th, error } = await sb.from('forum_threads').select('*, board:forum_boards(id,name,category_id)').eq('id', id).maybeSingle();
   if (error) return render(err(error));
   if (!th) return render(err('That topic does not exist (it may have been deleted).'));
   const total = th.reply_count + 1, pages = Math.max(1, Math.ceil(total / POSTS_PER_PAGE));
@@ -289,15 +306,16 @@ async function viewThread(id, q) {
     state.unreadThreads.delete(+id);
   }
   const firstPostId = page === 1 && posts[0] ? posts[0].id : null;
-  const canReply = canPost() && (!th.locked || isMod());
+  const bm = canModBoard(th.board.id, th.board.category_id);
+  const canReply = canPost() && (!th.locked || bm);
   const bar = `<div class="btnbar"><div>${pager(`#/thread/${id}`, page, pages)}</div><div>${canReply ? `<a class="btn" href="#" data-act="jump-reply">Reply</a>` : th.locked ? '<span class="btn grey" disabled>Locked</span>' : (!state.me ? '<a class="btn grey" href="#/login">Login to reply</a>' : '')}</div></div>`;
   let html = crumb([`<a href="#/board/${th.board.id}">${esc(th.board.name)}</a>`, `<a href="#/thread/${id}">${esc(th.title)}</a>`]) + bar;
   html += `<table class="tborder"><tr><th colspan="2">${img(ICON.msg[th.icon] || ICON.msg.default)} Topic: ${esc(th.title)} &nbsp;<span style="font-weight:normal">(Read ${th.view_count + 1} times)</span>${th.locked ? ' &nbsp;' + img(ICON.topic.locked, 'Locked') : ''}</th></tr>`;
   posts.forEach((p, i) => {
     const a = p.author, r = a ? rank(a) : { name: 'Deleted user', stars: 0 };
     const mine = state.me && a && a.id === state.me.id;
-    const canEdit = (mine && canPost()) || isMod();
-    const canDel = isMod() || (mine && canPost() && p.id !== firstPostId && !(page === 1 && i === 0));
+    const canEdit = (mine && canPost()) || bm;
+    const canDel = bm || (mine && canPost() && p.id !== firstPostId && !(page === 1 && i === 0));
     const num = (page - 1) * POSTS_PER_PAGE + i + 1;
     html += `<tr class="post" id="p${p.id}"><td class="ui">
         ${uname(a)}<br><span class="rank">${esc(r.name)}</span><br>${stars(r.stars)}<br>
@@ -314,8 +332,9 @@ async function viewThread(id, q) {
       </td></tr>`;
   });
   html += '</table>' + bar;
-  if (isMod()) {
-    const { data: boards } = await sb.from('forum_boards').select('id,name').order('sort');
+  if (bm) {
+    const { data: allBoards } = await sb.from('forum_boards').select('id,name,category_id').order('sort');
+    const boards = (allBoards || []).filter(b => canModBoard(b.id, b.category_id));
     html += `<div class="modbar"><b>Moderation:</b>
       <a class="btn sm blue" href="#" data-mod="sticky">${th.sticky ? 'Unsticky' : 'Make Sticky'}</a>
       <a class="btn sm blue" href="#" data-mod="lock">${th.locked ? 'Unlock' : 'Lock'}</a>
@@ -502,9 +521,10 @@ function viewNewPass() {
 async function viewProfile(id) {
   drawChrome(''); loading();
   const since = new Date(Date.now() - 15 * 60000);
-  const [{ data: p, error }, recent] = await Promise.all([
+  const [{ data: p, error }, recent, scopes] = await Promise.all([
     sb.from('forum_profiles').select('*').eq('id', id).maybeSingle(),
     sb.from('forum_posts').select('id,created_at,thread_id,thread:forum_threads(title)').eq('user_id', id).order('id', { ascending: false }).limit(5),
+    sb.from('forum_board_mods').select('board:forum_boards(id,name), category:forum_categories(name)').eq('user_id', id),
   ]);
   if (error) return render(err(error));
   if (!p) return render(err('Member not found.'));
@@ -517,6 +537,7 @@ async function viewProfile(id) {
     <td class="w1" style="vertical-align:top"><table style="width:100%" cellpadding="4">
       <tr><td class="muted" style="width:140px">Posts:</td><td><b>${p.post_count}</b></td></tr>
       <tr><td class="muted">Position:</td><td>${esc(r.name)}</td></tr>
+      ${(scopes.data || []).length ? `<tr><td class="muted" style="vertical-align:top">Moderates:</td><td>${scopes.data.map(x => x.board ? `<a href="#/board/${x.board.id}">${esc(x.board.name)}</a>` : `${esc(x.category?.name || '')} <span class="small muted">(entire category)</span>`).join('<br>')}</td></tr>` : ''}
       <tr><td class="muted">Date Registered:</td><td>${fmtDay(p.created_at)}</td></tr>
       <tr><td class="muted">Last Active:</td><td>${fmtDate(p.last_seen)}</td></tr>
       <tr><td class="muted">Location:</td><td>${esc(p.location || '—')}</td></tr>
@@ -620,7 +641,7 @@ async function route() {
   const q = Object.fromEntries(new URLSearchParams(qs || ''));
   pingSeen();
   // Re-read my profile on every page so role changes (admin/mod/ban) apply without a reload.
-  if (state.session) { const { data: p } = await sb.from('forum_profiles').select('*').eq('id', state.session.user.id).maybeSingle(); state.me = p; }
+  if (state.session) { const { data: p } = await sb.from('forum_profiles').select('*').eq('id', state.session.user.id).maybeSingle(); state.me = p; await loadMyMods(); }
   if (state.session && !state.me && !['#/setup', '#/newpass'].includes(path)) { await ensureProfile(); await loadMe(); if (!state.me) return viewSetup(); }
   let m;
   if (path === '#/' || path === '#' || path === '') return viewIndex();

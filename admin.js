@@ -6,7 +6,7 @@ function adminTabs(active) {
 }
 async function viewAdmin() {
   drawChrome('admin');
-  if (!isAdmin()) return render(err('Administrators only.'));
+  if (!isAdmin()) return isMod() ? viewModCP() : render(err('Administrators only.'));
   if (/[?&]tab=look/.test(location.hash)) return viewAdminLook();
   loading();
   const [cats, boards] = await Promise.all([
@@ -47,10 +47,11 @@ async function viewAdmin() {
     <tr><td class="lbl">Description:</td><td><input type="text" id="bdesc" style="width:500px"></td></tr>
     <tr><td class="lbl">Options:</td><td><label><input type="checkbox" id="bmod"> Only staff can start topics</label></td></tr>
     <tr><td class="lbl"></td><td><button class="btn sm" id="addboard">Add Board</button></td></tr></table>
+  <div id="bm_section"></div>
   <a id="roles"></a><table class="tborder form"><tr><th colspan="2">Member Roles &mdash; Find a Member</th></tr>
     <tr><td class="lbl">Username contains:<div class="muted small">Leave blank to list current staff and bans</div></td>
       <td><input type="text" id="af_q" style="width:220px"> <select id="af_role"><option value="">Any position</option><option value="admin">Administrators</option>
-        <option value="mod">Moderators</option><option value="member">Members</option><option value="banned">Banned</option></select>
+        <option value="mod">Global Moderators</option><option value="boardmod">Moderators</option><option value="member">Members</option><option value="banned">Banned</option></select>
         <button class="btn sm" id="af_go">Find</button></td></tr></table>
   <div id="af_results"></div>`);
 
@@ -139,6 +140,63 @@ async function viewAdmin() {
   document.getElementById('af_q').onkeydown = (e) => { if (e.key === 'Enter') runFind(); };
   document.getElementById('af_role').onchange = runFind;
   loadMemberFinder(af);
+  loadBoardMods(document.getElementById('bm_section'), C, B);
+}
+
+/* ---- Moderator Control Panel (global moderators) ---- */
+async function viewModCP() {
+  loading();
+  const [cats, boards] = await Promise.all([
+    sb.from('forum_categories').select('*').order('sort').order('id'),
+    sb.from('forum_boards').select('*').order('sort').order('id'),
+  ]);
+  if (cats.error || boards.error) return render(err(cats.error || boards.error));
+  render(crumb(['Moderator Control Panel']) + `<div class="notice">As a Global Moderator you can moderate every board and choose which members moderate individual boards or whole categories.</div><div id="bm_section"></div>`);
+  loadBoardMods(document.getElementById('bm_section'), cats.data, boards.data);
+}
+
+/* ---- Board & category moderators (admins + global mods) ---- */
+async function loadBoardMods(box, C, B) {
+  if (!box) return;
+  box.innerHTML = '<div class="loading">Loading moderators...</div>';
+  const { data, error } = await sb.from('forum_board_mods')
+    .select(`id, created_at, board_id, category_id, user:forum_profiles!forum_board_mods_user_id_fkey(${PROF}), by:forum_profiles!forum_board_mods_created_by_fkey(username)`)
+    .order('created_at');
+  if (error) { box.innerHTML = err(error); return; }
+  const scopeName = (m) => m.board_id ? `<a href="#/board/${m.board_id}">${esc((B.find(b => b.id === m.board_id) || {}).name || 'board')}</a>`
+    : `${esc((C.find(c => c.id === m.category_id) || {}).name || 'category')} <span class="small muted">(entire category)</span>`;
+  const scopeOpts = C.map(c => `<optgroup label="${esc(c.name)}"><option value="c:${c.id}">&#9654; Entire category: ${esc(c.name)}</option>${B.filter(b => b.category_id === c.id).map(b => `<option value="b:${b.id}">${esc(b.name)}</option>`).join('')}</optgroup>`).join('');
+  box.innerHTML = `<table class="tborder"><tr><th colspan="4">Moderators &mdash; Boards &amp; Categories</th></tr>
+    <tr><td class="titlebg small" style="padding:3px 6px">Member</td><td class="titlebg small" style="padding:3px 6px">Moderates</td><td class="titlebg small" style="padding:3px 6px;width:180px">Assigned</td><td class="titlebg" style="width:80px"></td></tr>
+    ${data.length ? data.map((m, i) => { const c = i % 2 ? 'w2' : 'w1'; return `<tr><td class="${c}">${uname(m.user)}</td><td class="${c}">${scopeName(m)}</td>
+      <td class="${c} small muted">${fmtDate(m.created_at)}${m.by ? ' by ' + esc(m.by.username) : ''}</td><td class="${c} ctr"><button class="btn sm grey" data-unmod="${m.id}">Remove</button></td></tr>`; }).join('')
+      : '<tr><td colspan="4" class="w1 ctr small muted" style="padding:12px">No board or category moderators yet.</td></tr>'}
+  </table>
+  <table class="tborder form"><tr><th colspan="2">Assign a Moderator</th></tr>
+    <tr><td class="lbl">Member:<div class="muted small">Start typing a username</div></td><td><input type="text" id="bm_user" list="bm_userlist" autocomplete="off" style="width:220px"><datalist id="bm_userlist"></datalist></td></tr>
+    <tr><td class="lbl">Moderates:<div class="muted small">One board, or a whole category</div></td><td><select id="bm_scope">${scopeOpts}</select></td></tr>
+    <tr><td class="lbl"></td><td><button class="btn sm" id="bm_add">Assign Moderator</button> <span class="small muted">Moderators can lock, sticky, move and delete topics and edit or delete posts &mdash; only in what they moderate.</span></td></tr></table>`;
+  const input = box.querySelector('#bm_user'), list = box.querySelector('#bm_userlist');
+  let t; input.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
+    const term = input.value.trim(); if (term.length < 2) return;
+    const { data: found } = await findMembers({ term, sort: 'name', per: 10, cols: 'id,username,role' });
+    list.innerHTML = (found || []).filter(m => ['member', 'boardmod'].includes(m.role)).map(m => `<option value="${esc(m.username)}">`).join('');
+  }, 250); };
+  box.querySelector('#bm_add').onclick = async () => {
+    const name = input.value.trim(); if (!name) return;
+    const { data: u } = await sb.from('forum_profiles').select('id').ilike('username', likeEsc(name)).maybeSingle();
+    if (!u) { box.insertAdjacentHTML('afterbegin', err('No member with that username.')); return; }
+    const [kind, id] = box.querySelector('#bm_scope').value.split(':');
+    const { error: e2 } = await sb.rpc('forum_add_board_mod', { p_user: u.id, p_board: kind === 'b' ? +id : null, p_category: kind === 'c' ? +id : null });
+    if (e2) { box.insertAdjacentHTML('afterbegin', err(e2)); return; }
+    loadBoardMods(box, C, B);
+  };
+  box.querySelectorAll('[data-unmod]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Remove this moderator assignment?')) return;
+    const { error: e3 } = await sb.rpc('forum_remove_board_mod', { p_id: +btn.dataset.unmod });
+    if (e3) { box.insertAdjacentHTML('afterbegin', err(e3)); return; }
+    loadBoardMods(box, C, B);
+  });
 }
 
 /* ---- Member finder used in Admin -> Member Roles ---- */
@@ -155,7 +213,7 @@ async function loadMemberFinder(af) {
   }
   if (res.error) { box.innerHTML = err(res.error); return; }
   const rows = res.data || [], total = res.count || 0, pages = Math.max(1, Math.ceil(total / per));
-  const roleSel = (m) => `<select data-role="${m.id}">${[['member', 'Member'], ['mod', 'Global Moderator'], ['admin', 'Administrator'], ['banned', 'Banned']]
+  const roleSel = (m) => `<select data-role="${m.id}">${[['member', 'Member'], ...(m.role === 'boardmod' ? [['boardmod', 'Moderator (boards)']] : []), ['mod', 'Global Moderator'], ['admin', 'Administrator'], ['banned', 'Banned']]
     .map(([v, l]) => `<option value="${v}"${m.role === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
   box.innerHTML = `<table class="tborder"><tr><th>Username</th><th class="num">Posts</th><th style="width:110px">Joined</th><th style="width:160px">Position</th><th style="width:190px">Custom title</th><th style="width:70px"></th></tr>
     ${rows.length ? rows.map((m, i) => { const c = i % 2 ? 'w2' : 'w1'; return `<tr data-row="${m.id}"><td class="${c}">${uname(m)}${state.me && m.id === state.me.id ? ' <span class="small muted">(you)</span>' : ''}</td>
@@ -186,11 +244,28 @@ async function loadMemberFinder(af) {
 /* ================= Look & Feel ================= */
 const COLOR_FIELDS = [
   ['Page & panels', [['page_bg', 'Page background'], ['bg', 'Forum background'], ['row1', 'Row (light)'], ['row2', 'Row (dark)'], ['row3', 'Row highlight'], ['border', 'Borders'], ['input_bg', 'Text boxes']]],
-  ['Text & links', [['text', 'Text'], ['muted', 'Faded text'], ['link', 'Links'], ['hover', 'Link hover'], ['accent', 'Accent (admin names, stars)']]],
+  ['Text & links', [['text', 'Text'], ['muted', 'Faded text'], ['link', 'Links'], ['hover', 'Link hover'], ['accent', 'Accent (highlights, logo)']]],
   ['Bars & buttons', [['head1', 'Header bar top'], ['head2', 'Header bar bottom'], ['cat1', 'Category bar top'], ['cat2', 'Category bar bottom'],
     ['btn1', 'Button top'], ['btn2', 'Button bottom'], ['nav1', 'Nav bar top'], ['nav2', 'Nav bar bottom']]],
   ['Banner (classic style)', [['banner1', 'Banner top'], ['banner2', 'Banner bottom'], ['glow1', 'Glow 1'], ['glow2', 'Glow 2'], ['logo', 'Logo text']]],
+  ['Usernames', [['name_admin', 'Administrators'], ['name_mod', 'Global Moderators'], ['name_boardmod', 'Moderators'], ['name_member', 'Members']]],
 ];
+const BANNER_W = 1080, BANNER_H = 150;
+
+/* Scale + center-crop any photo to exactly BANNER_W x BANNER_H and re-encode as JPG. */
+async function makeBannerJpg(file) {
+  if (!/^image\/jpe?g$/i.test(file.type) && !/\.jpe?g$/i.test(file.name)) throw new Error('Please choose a .jpg / .jpeg file.');
+  const url = URL.createObjectURL(file), im = new Image();
+  await new Promise((ok, bad) => { im.onload = ok; im.onerror = () => bad(new Error('That file could not be read as an image.')); im.src = url; });
+  const cv = document.createElement('canvas'); cv.width = BANNER_W; cv.height = BANNER_H;
+  const g = cv.getContext('2d'); g.imageSmoothingQuality = 'high';
+  const sc = Math.max(BANNER_W / im.naturalWidth, BANNER_H / im.naturalHeight), sw = BANNER_W / sc, sh = BANNER_H / sc;
+  g.drawImage(im, (im.naturalWidth - sw) / 2, (im.naturalHeight - sh) / 2, sw, sh, 0, 0, BANNER_W, BANNER_H);
+  URL.revokeObjectURL(url);
+  let q = 0.92, blob;
+  do { blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', q)); q -= 0.1; } while (blob.size > 1.5e6 && q > 0.4);
+  return { blob, w: im.naturalWidth, h: im.naturalHeight, exact: im.naturalWidth === BANNER_W && im.naturalHeight === BANNER_H };
+}
 const FONTS = ['Verdana, Tahoma, Arial, sans-serif', 'Tahoma, Verdana, sans-serif', '"Trebuchet MS", Verdana, sans-serif', 'Arial, Helvetica, sans-serif',
   'Georgia, "Times New Roman", serif', '"Lucida Grande", "Lucida Sans Unicode", sans-serif', '"Courier New", monospace'];
 
@@ -218,7 +293,11 @@ async function viewAdminLook() {
     <tr><td class="lbl">Banner height:</td><td><input type="text" id="s_bh" value="${val('banner_height')}" style="width:60px"> px <span class="small muted">(40&ndash;400)</span></td></tr>
     <tr class="bm bm-classic"><td class="lbl">Logo text:<div class="muted small">Second part uses the accent color</div></td><td><input type="text" id="s_logo1" value="${val('logo1')}" style="width:180px"> + <input type="text" id="s_logo2" value="${val('logo2')}" style="width:180px">
       &nbsp;<label class="small"><input type="checkbox" id="s_orbs"${S.banner_orbs ? ' checked' : ''}> Show glowing orbs</label></td></tr>
-    <tr class="bm bm-image"><td class="lbl">Image URL:<div class="muted small">Must start with https://</div></td><td><input type="url" id="s_bimg" value="${val('banner_image')}" style="width:500px"></td></tr>
+    <tr class="bm bm-image"><td class="lbl">Upload a JPG:<div class="muted small">Exact size: <b>${BANNER_W} &times; ${BANNER_H} pixels</b></div></td><td>
+      <input type="file" id="s_bfile" accept=".jpg,.jpeg,image/jpeg"> <button class="btn sm blue" id="s_bup">Upload &amp; Use</button>
+      <div class="small muted" style="margin-top:4px">Banner images are ${BANNER_W} pixels wide by ${BANNER_H} pixels tall. A JPG of any other size is scaled and center-cropped to exactly ${BANNER_W} &times; ${BANNER_H} before uploading, so design yours at that size for a perfect fit.</div>
+      <div id="s_bstatus" class="small" style="margin-top:4px"></div></td></tr>
+    <tr class="bm bm-image"><td class="lbl">Image URL:<div class="muted small">Filled in by the upload, or paste any https:// image link</div></td><td><input type="url" id="s_bimg" value="${val('banner_image')}" style="width:500px"></td></tr>
     <tr class="bm bm-image"><td class="lbl">Image fit:</td><td><select id="s_bfit">${['cover', 'contain', 'fill'].map(f => `<option${S.banner_fit === f ? ' selected' : ''}>${f}</option>`).join('')}</select>
       &nbsp;<label class="small"><input type="checkbox" id="s_btext"${S.banner_text_on_image ? ' checked' : ''}> Show logo text on top of the image</label></td></tr>
     <tr class="bm bm-html"><td class="lbl">Banner HTML:<div class="muted small">Replaces the whole banner. &lt;style&gt; blocks are allowed.</div></td><td>${area('s_bhtml', S.banner_html, 8, '<div style="...">My banner</div>')}</td></tr></table>
@@ -266,6 +345,23 @@ async function viewAdminLook() {
   root.addEventListener('input', preview); root.addEventListener('change', () => { showMode(); preview(); });
   showMode();
 
+  $('s_bup').onclick = async (ev) => {
+    const f = $('s_bfile').files[0], st = $('s_bstatus');
+    if (!f) { st.innerHTML = '<span style="color:var(--orange)">Choose a .jpg file first.</span>'; return; }
+    ev.target.disabled = true; st.textContent = 'Preparing image...';
+    try {
+      const out = await makeBannerJpg(f);
+      st.textContent = 'Uploading...';
+      const path = `banners/banner-${Date.now()}.jpg`;
+      const { error } = await sb.storage.from('forum-assets').upload(path, out.blob, { contentType: 'image/jpeg', cacheControl: '31536000', upsert: false });
+      if (error) throw error;
+      $('s_bimg').value = sb.storage.from('forum-assets').getPublicUrl(path).data.publicUrl;
+      $('s_bh').value = BANNER_H; $('s_bfit').value = 'cover';
+      st.innerHTML = (out.exact ? `Uploaded your ${BANNER_W} &times; ${BANNER_H} banner.` : `Uploaded. Your image was ${out.w} &times; ${out.h}, so it was scaled and cropped to ${BANNER_W} &times; ${BANNER_H}.`) + ' <b>Click Save Changes to make it live.</b>';
+      preview();
+    } catch (e2) { st.innerHTML = err(e2); }
+    ev.target.disabled = false;
+  };
   $('s_preset').onchange = (ev) => {
     const p = THEME_PRESETS[ev.target.value]; if (!p) return;
     root.querySelectorAll('[data-color]').forEach(i => { if (p[i.dataset.color]) i.value = p[i.dataset.color]; });

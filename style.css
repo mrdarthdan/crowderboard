@@ -15,7 +15,7 @@ body {
 a { color: var(--link); text-decoration: none; }
 a:hover { color: var(--hover); text-decoration: underline; }
 img { border: 0; vertical-align: middle; }
-#wrap { width: 92%; max-width: 1080px; min-width: 760px; margin: 12px auto; border: 1px solid var(--border); background: var(--bg); box-shadow: 0 0 0 1px #3a3d42, 0 0 30px #000; }
+#wrap { width: 92%; max-width: 1082px; min-width: 760px; margin: 12px auto; border: 1px solid var(--border); background: var(--bg); box-shadow: 0 0 0 1px #3a3d42, 0 0 30px #000; }
 
 /* ---------- Logo banner ---------- */
 #banner {
@@ -69,6 +69,7 @@ tr.hl:hover td { background: #3a3e44; }
 .u { font-weight: bold; }
 .u-admin { color: #ff9a2e !important; }
 .u-mod { color: #7ec3ff !important; }
+.u-boardmod { color: #7fe08a !important; }
 .u-banned { color: #777 !important; text-decoration: line-through; }
 
 /* ---------- Buttons ---------- */

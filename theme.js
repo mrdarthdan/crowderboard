@@ -41,7 +41,7 @@ const SITE_DEFAULTS = {
   banner_image: '', banner_fit: 'cover', banner_text_on_image: false,
   banner_html: '',
   font: 'Verdana, Tahoma, Arial, sans-serif', font_size: 11,
-  colors: { ...THEME_PRESETS['Midnight Classic (default)'] },
+  colors: { ...THEME_PRESETS['Midnight Classic (default)'], name_admin: '#ff9a2e', name_mod: '#7ec3ff', name_boardmod: '#7fe08a', name_member: '#8fbaf0' },
   custom_css: '', header_html: '', footer_html: '',
 };
 const SITE = { ...structuredClone(SITE_DEFAULTS), ready: null };
@@ -95,7 +95,10 @@ body{background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.02) 0 2p
 input[type=text],input[type=email],input[type=password],input[type=url],textarea,select{background:${c.input_bg};color:${c.text};outline-color:${c.row3}}
 input:focus,textarea:focus,select:focus{outline-color:${c.accent}}
 .post .ptext,.post .ptime,.post .edited{color:inherit}
-.u-admin{color:${c.accent}!important}
+${(() => { const nm = (k, fb) => cssColor(s.colors?.[k], fb); return `.u-admin{color:${nm('name_admin', c.accent)}!important}
+.u-mod{color:${nm('name_mod', '#7ec3ff')}!important}
+.u-boardmod{color:${nm('name_boardmod', '#7fe08a')}!important}
+.u-member{color:${nm('name_member', c.link)}!important}`; })()}
 #footer .badge span:first-child{background:${c.accent}}
 #footer .badge span:last-child{background:${c.head2}}
 .loading:before{background:${c.accent}}
