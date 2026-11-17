@@ -623,7 +623,6 @@ function viewNewPass() {
     document.getElementById('msg').innerHTML = error ? err(error) : '<div class="notice">Password updated! <a href="#/">Back to the forum</a></div>';
   };
 }
-
 /* ---------- profiles & members ---------- */
 async function viewProfile(id) {
   drawChrome(''); loading();
