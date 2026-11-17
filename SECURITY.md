@@ -19,6 +19,8 @@ How:
 - **Triggers** stamp `created_at`/`edited_at` server-side, keep counters accurate, clamp "last seen" timestamps, and **rate-limit** members (5 posts per minute, 5 PMs per minute, 5 new topics per 10 minutes).
 - **`SECURITY DEFINER` functions** for multi-step actions (start a topic, moderate a topic, set a role) check the caller's role first and pin `search_path`.
 - Board-moderator assignments live in `forum_board_mods`, readable by everyone but writable only through `forum_add_board_mod` / `forum_remove_board_mod`. Admins and global moderators cannot be assigned, and a member's position reverts to Member when their last assignment is removed.
+- **Spam and abuse controls (v1.3):** a trigger blocks links/images in posts, edits and PMs from members below a post-count threshold; an optional approval queue (`forum_pending`) holds first posts until staff approve them; members file reports through `forum_report_post` (rate-limited, one per post); staff resolve them with `forum_resolve_report`, scoped to the boards they moderate. Staff actions are written to `forum_modlog` by the database itself, and bans store an optional reason in `forum_bans`. Administrators cannot demote themselves by accident through `forum_set_role`.
+- **Human check:** when enabled, direct profile inserts are refused and the `forum-join` edge function verifies the Turnstile token server-side before creating the profile.
 - The `forum-assets` storage bucket is public to read, accepts JPEGs up to 2 MB, and only administrators can upload, replace or delete files.
 - The `anon`/`authenticated` API roles have no `TRUNCATE`, `TRIGGER` or `REFERENCES` privileges, and internal helper functions are not callable from the API.
 
@@ -31,7 +33,7 @@ How:
 
 - **Admins are trusted.** The HTML sanitizer is a reasonable filter, not a guarantee against every browser parsing trick. Only give the Administrator role to people you trust with the whole site.
 - **Shared logins.** If your Supabase project also powers other apps on the same domain, members share one login across them, and any script running on that domain could use it. Don't loosen the sanitizer to allow scripts.
-- **Spam.** Rate limits slow down a single account but do not stop many accounts. Keep email confirmation on, and consider adding CAPTCHA (Supabase Auth supports hCaptcha/Turnstile).
+- **Spam.** Rate limits, link blocking and the approval queue slow spammers but cannot stop a determined human. Keep email confirmation on and consider turning on the Turnstile human check (see the README).
 - **View counts** can be inflated by anyone, since guests are allowed to record views.
 - **PM deletion** removes the message for both sender and recipient.
 - Avatar and post images load from third-party URLs, which can see the visitor's IP address (images are requested with `referrerpolicy="no-referrer"`).

@@ -2,12 +2,18 @@
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 function adminTabs(active) {
   const t = (key, label) => `<a class="btn ${active === key ? '' : 'grey'}" href="#/admin${key === 'boards' ? '' : '?tab=' + key}">${label}</a>`;
-  return `<div class="btnbar"><div>${t('boards', 'Boards &amp; Members')} ${t('look', 'Look &amp; Feel')}</div></div>`;
+  const c = state.modCounts || { reports: 0, pending: 0 };
+  const first = isAdmin() ? `${t('boards', 'Boards &amp; Members')} ${t('look', 'Look &amp; Feel')} ` : (isMod() ? `${t('boards', 'Board Moderators')} ` : '');
+  return `<div class="btnbar"><div>${first}${t('reports', 'Reports' + (c.reports ? ` (${c.reports})` : ''))} ${t('queue', 'Approval Queue' + (c.pending ? ` (${c.pending})` : ''))} ${t('log', 'Mod Log')}${isAdmin() ? ' ' + t('spam', 'Spam Protection') : ''}</div></div>`;
 }
 async function viewAdmin() {
   drawChrome('admin');
-  if (!isAdmin()) return isMod() ? viewModCP() : render(err('Administrators only.'));
-  if (/[?&]tab=look/.test(location.hash)) return viewAdminLook();
+  const tab = (location.hash.match(/[?&]tab=(\w+)/) || [])[1];
+  if (!(isMod() || state.me?.role === 'boardmod')) return render(err('Staff only.'));
+  if (['reports', 'queue', 'log'].includes(tab)) return viewStaffTab(tab);
+  if (tab === 'spam') return isAdmin() ? viewAdminSpam() : render(err('Administrators only.'));
+  if (!isAdmin()) return viewModCP();
+  if (tab === 'look') return viewAdminLook();
   loading();
   const [cats, boards] = await Promise.all([
     sb.from('forum_categories').select('*').order('sort').order('id'),
@@ -145,13 +151,14 @@ async function viewAdmin() {
 
 /* ---- Moderator Control Panel (global moderators) ---- */
 async function viewModCP() {
+  if (!isMod()) return viewStaffTab('reports');   // board moderators: reports, queue and log for their own boards
   loading();
   const [cats, boards] = await Promise.all([
     sb.from('forum_categories').select('*').order('sort').order('id'),
     sb.from('forum_boards').select('*').order('sort').order('id'),
   ]);
   if (cats.error || boards.error) return render(err(cats.error || boards.error));
-  render(crumb(['Moderator Control Panel']) + `<div class="notice">As a Global Moderator you can moderate every board and choose which members moderate individual boards or whole categories.</div><div id="bm_section"></div>`);
+  render(crumb(['Moderator Control Panel']) + adminTabs('boards') + `<div class="notice">As a Global Moderator you can moderate every board and choose which members moderate individual boards or whole categories.</div><div id="bm_section"></div>`);
   loadBoardMods(document.getElementById('bm_section'), cats.data, boards.data);
 }
 
@@ -213,11 +220,13 @@ async function loadMemberFinder(af) {
   }
   if (res.error) { box.innerHTML = err(res.error); return; }
   const rows = res.data || [], total = res.count || 0, pages = Math.max(1, Math.ceil(total / per));
+  const bannedIds = rows.filter(r => r.role === 'banned').map(r => r.id), reasons = {};
+  if (bannedIds.length) { const { data: bans } = await sb.from('forum_bans').select('user_id,reason').in('user_id', bannedIds); (bans || []).forEach(b => reasons[b.user_id] = b.reason); }
   const roleSel = (m) => `<select data-role="${m.id}">${[['member', 'Member'], ...(m.role === 'boardmod' ? [['boardmod', 'Moderator (boards)']] : []), ['mod', 'Global Moderator'], ['admin', 'Administrator'], ['banned', 'Banned']]
     .map(([v, l]) => `<option value="${v}"${m.role === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
   box.innerHTML = `<table class="tborder"><tr><th>Username</th><th class="num">Posts</th><th style="width:110px">Joined</th><th style="width:160px">Position</th><th style="width:190px">Custom title</th><th style="width:70px"></th></tr>
     ${rows.length ? rows.map((m, i) => { const c = i % 2 ? 'w2' : 'w1'; return `<tr data-row="${m.id}"><td class="${c}">${uname(m)}${state.me && m.id === state.me.id ? ' <span class="small muted">(you)</span>' : ''}</td>
-      <td class="${c} num">${m.post_count}</td><td class="${c} small">${fmtDay(m.created_at)}</td><td class="${c}">${roleSel(m)}</td>
+      <td class="${c} num">${m.post_count}</td><td class="${c} small">${fmtDay(m.created_at)}</td><td class="${c}">${roleSel(m)}${reasons[m.id] ? `<div class="small muted">Reason: ${esc(reasons[m.id])}</div>` : ''}</td>
       <td class="${c}"><input type="text" data-title="${m.id}" value="${esc(m.title || '')}" maxlength="40" placeholder="(rank default)" style="width:170px"></td>
       <td class="${c} ctr"><button class="btn sm" data-save="${m.id}">Save</button></td></tr>`; }).join('')
       : `<tr><td colspan="6" class="w1 ctr" style="padding:16px">${!af.term && !af.role ? 'No staff or banned members yet. Search for a username above.' : 'No members match that search.'}</td></tr>`}
@@ -231,10 +240,14 @@ async function loadMemberFinder(af) {
     const id = btn.dataset.save, m = rows.find(x => x.id === id);
     const role = box.querySelector(`[data-role="${id}"]`).value, title = box.querySelector(`[data-title="${id}"]`).value.trim();
     if (state.me && id === state.me.id && role !== 'admin' && !confirm('You are about to remove your own Administrator access. Continue?')) return;
-    if (role === 'banned' && m.role !== 'banned' && !confirm(`Ban ${m.username}? They will no longer be able to post, send messages, or edit their profile.`)) return;
+    let reason = null;
+    if (role === 'banned' && m.role !== 'banned') {
+      reason = prompt(`Ban ${m.username}? They will no longer be able to post, send messages, or edit their profile.\n\nOptional reason (the member can see it):`, '');
+      if (reason === null) return;
+    }
     btn.disabled = true;
     // An empty title clears it (members then show their post-count rank).
-    const { error } = await sb.rpc('forum_set_role', { p_user: id, p_role: role, p_title: title });
+    const { error } = await sb.rpc('forum_set_role', { p_user: id, p_role: role, p_title: title, p_reason: reason });
     btn.disabled = false;
     if (error) { box.insertAdjacentHTML('afterbegin', err(error)); return; }
     btn.textContent = 'Saved!'; setTimeout(() => loadMemberFinder(af), 700);

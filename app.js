@@ -1,4 +1,4 @@
-/* CrowderBoard v1.2 — a classic message board on Supabase.
+/* CrowderBoard v1.3 — a classic message board on Supabase.
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 const SB_URL = (window.CROWDERBOARD_CONFIG || {}).supabaseUrl;
 const SB_KEY = (window.CROWDERBOARD_CONFIG || {}).supabaseKey;
@@ -9,7 +9,7 @@ if (!SB_URL || !SB_KEY || /YOUR-/.test(SB_URL + SB_KEY)) {
 const TOPICS_PER_PAGE = 20, POSTS_PER_PAGE = 15, HOT_REPLIES = 15;
 const sb = supabase.createClient(SB_URL, SB_KEY);
 
-const state = { session: null, me: null, myMods: [], unreadThreads: new Set(), unreadBoards: new Set(), pmUnread: 0, lastSeenPing: 0 };
+const state = { session: null, me: null, myMods: [], modCounts: { reports: 0, pending: 0 }, myPending: 0, banReason: null, unreadThreads: new Set(), unreadBoards: new Set(), pmUnread: 0, lastSeenPing: 0 };
 const $main = document.getElementById('main');
 const PROF = 'id,username,role,avatar_url,post_count,title';
 
@@ -151,16 +151,26 @@ async function loadMe() {
   if (state.session) {
     const { data: p } = await sb.from('forum_profiles').select('*').eq('id', state.session.user.id).maybeSingle();
     state.me = p;
+    state.banReason = null;
+    if (p && p.role === 'banned') { const { data: b } = await sb.from('forum_bans').select('reason').eq('user_id', p.id).maybeSingle(); state.banReason = b ? (b.reason || '') : ''; }
   }
   await Promise.all([refreshUnread(), loadMyMods()]);
 }
 async function refreshUnread() {
   state.unreadThreads = new Set(); state.unreadBoards = new Set(); state.pmUnread = 0;
+  state.modCounts = { reports: 0, pending: 0 }; state.myPending = 0;
   if (!state.me) return;
-  const [u, pm] = await Promise.all([
+  const staff = isMod() || state.me.role === 'boardmod';
+  const head = (t) => sb.from(t).select('id', { count: 'exact', head: true });
+  const [u, pm, mine, rep, pen] = await Promise.all([
     sb.rpc('forum_unread'),
     sb.from('forum_messages').select('id', { count: 'exact', head: true }).eq('to_user', state.me.id).eq('is_read', false),
+    head('forum_pending').eq('user_id', state.me.id),
+    staff ? head('forum_reports').eq('status', 'open') : null,
+    staff ? head('forum_pending') : null,
   ]);
+  state.myPending = mine?.count || 0;
+  state.modCounts = { reports: rep?.count || 0, pending: pen?.count || 0 };
   (u.data || []).forEach(r => { state.unreadThreads.add(r.thread_id); state.unreadBoards.add(r.board_id); });
   state.pmUnread = pm.count || 0;
 }
@@ -175,8 +185,9 @@ function drawChrome(active) {
   if (state.me) {
     nav += n('#/pm', `Inbox${state.pmUnread ? ` (${state.pmUnread})` : ''}`, state.pmUnread ? ICON.misc.pmnew : '', 'pm');
     nav += n('#/editprofile', 'Profile', '', 'profile');
-    if (isAdmin()) nav += n('#/admin', 'Admin', '', 'admin');
-    else if (isMod()) nav += n('#/admin', 'Mod CP', '', 'admin');
+    const badge = state.modCounts.reports + state.modCounts.pending;
+    if (isAdmin()) nav += n('#/admin', `Admin${badge ? ` (${badge})` : ''}`, '', 'admin');
+    else if (isMod() || state.me.role === 'boardmod') nav += n('#/admin', `Mod CP${badge ? ` (${badge})` : ''}`, '', 'admin');
     nav += `<a href="#" id="logout">Logout</a>`;
   } else if (state.session) {
     nav += n('#/setup', 'Finish Sign-up', '', 'setup') + `<a href="#" id="logout">Logout</a>`;
@@ -190,7 +201,9 @@ function drawChrome(active) {
   const date = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   const quick = `<span class="quicksearch"><input type="text" id="qs" placeholder="Search posts..." maxlength="200"> <button class="btn sm blue" id="qsgo">Go</button> &nbsp; ${date}</span>`;
   if (state.me) {
-    w.innerHTML = `<span>Hey, <b>${esc(state.me.username)}</b>! You have <a href="#/pm">${state.pmUnread} new message${state.pmUnread === 1 ? '' : 's'}</a>. &nbsp;<a href="#" id="markall">Mark all as read</a></span>${quick}`;
+    const note = state.me.role === 'banned' ? ` <b style="color:#ff8a6a">Your account is banned${state.banReason ? ': ' + esc(state.banReason) : ''}.</b>`
+      : state.myPending ? ` <b style="color:var(--orange)">${state.myPending} of your posts ${state.myPending === 1 ? 'is' : 'are'} waiting for moderator approval.</b>` : '';
+    w.innerHTML = `<span>Hey, <b>${esc(state.me.username)}</b>! You have <a href="#/pm">${state.pmUnread} new message${state.pmUnread === 1 ? '' : 's'}</a>. &nbsp;<a href="#" id="markall">Mark all as read</a>${note}</span>${quick}`;
     document.getElementById('markall').onclick = async (e) => {
       e.preventDefault();
       await sb.from('forum_profiles').update({ mark_read_at: new Date().toISOString() }).eq('id', state.me.id);
@@ -227,7 +240,7 @@ async function viewIndex() {
     const { data } = await sb.from('forum_threads').select('id,title,reply_count').in('id', tids);
     (data || []).forEach(t => titles[t.id] = t);
   }
-  let html = `<table class="tborder"><tr><th class="icon-col"></th><th>Forum</th><th class="num">Topics</th><th class="num">Posts</th><th class="lastpost">Last Post</th></tr>`;
+  let html = `<table class="tborder idx"><tr><th class="icon-col"></th><th>Forum</th><th class="num">Topics</th><th class="num">Posts</th><th class="lastpost">Last Post</th></tr>`;
   for (const c of cats.data) {
     html += `<tr><td colspan="5" class="catbg">${esc(c.name)}</td></tr>`;
     for (const b of boards.data.filter(b => b.category_id === c.id)) {
@@ -272,7 +285,7 @@ async function viewBoard(id, q) {
   const canNew = canPost() && (!board.mod_only_threads || canModBoard(board.id, board.category_id));
   const bar = `<div class="btnbar"><div>${pager(`#/board/${id}`, page, pages)}</div><div>${canNew ? `<a class="btn" href="#/new/${id}">New Topic</a>` : (!state.me ? '<a class="btn grey" href="#/login">Login to post</a>' : '')}</div></div>`;
   let html = crumb([`<a href="#/board/${id}">${esc(board.name)}</a>`]) + bar;
-  html += `<table class="tborder"><tr><th class="icon-col"></th><th class="icon-col"></th><th>Subject</th><th style="width:120px">Started by</th><th class="num">Replies</th><th class="num">Views</th><th class="lastpost">Last Post</th></tr>`;
+  html += `<table class="tborder threads"><tr><th class="icon-col"></th><th class="icon-col"></th><th>Subject</th><th style="width:120px">Started by</th><th class="num">Replies</th><th class="num">Views</th><th class="lastpost">Last Post</th></tr>`;
   if (!t.data.length) html += `<tr><td colspan="7" class="w1 ctr" style="padding:20px">No topics yet. ${canNew ? `Why not <a href="#/new/${id}">start one</a>?` : ''}</td></tr>`;
   for (const th of t.data) {
     const isNew = state.unreadThreads.has(th.id), hot = th.reply_count >= HOT_REPLIES;
@@ -325,7 +338,7 @@ async function viewThread(id, q) {
       </td><td class="body">
         <div class="phead"><div>${img(ICON.msg[th.icon] || ICON.msg.default)} <span class="ptitle">${i === 0 && page === 1 ? esc(th.title) : 'Re: ' + esc(th.title)}</span>
           <div class="ptime">« Reply #${num - 1 || 'Topic'} on: ${fmtDate(p.created_at)} »</div></div>
-          <div>${canReply ? `<a class="btn sm blue" href="#" data-act="quote" data-id="${p.id}">Quote</a> ` : ''}${canEdit ? `<a class="btn sm grey" href="#" data-act="edit" data-id="${p.id}">Edit</a> ` : ''}${canDel ? `<a class="btn sm grey" href="#" data-act="del" data-id="${p.id}">Delete</a>` : ''}</div></div>
+          <div>${canReply ? `<a class="btn sm blue" href="#" data-act="quote" data-id="${p.id}">Quote</a> ` : ''}${state.me && !mine && canPost() ? `<a class="btn sm grey" href="#" data-act="report" data-id="${p.id}">Report</a> ` : ''}${canEdit ? `<a class="btn sm grey" href="#" data-act="edit" data-id="${p.id}">Edit</a> ` : ''}${canDel ? `<a class="btn sm grey" href="#" data-act="del" data-id="${p.id}">Delete</a>` : ''}</div></div>
         <div class="ptext" data-body="${p.id}">${bbcode(p.body)}</div>
         ${p.edited_at ? `<div class="edited">« Last Edit: ${fmtDate(p.edited_at)}${p.editor ? ' by ' + esc(p.editor.username) : ''} »</div>` : ''}
         ${a?.signature ? `<div class="sig">${bbcode(a.signature)}</div>` : ''}
@@ -357,6 +370,7 @@ async function viewThread(id, q) {
     e.preventDefault(); const p = posts.find(x => x.id == a.dataset.id);
     ta.value += `[quote=${p.author?.username || 'Guest'}]${p.body}[/quote]\n`; ta.scrollIntoView({ behavior: 'smooth' }); ta.focus();
   });
+  $main.querySelectorAll('[data-act="report"]').forEach(a => a.onclick = (e) => { e.preventDefault(); Mod.report(+a.dataset.id); });
   $main.querySelectorAll('[data-act="edit"]').forEach(a => a.onclick = (e) => {
     e.preventDefault(); const p = posts.find(x => x.id == a.dataset.id);
     const holder = $main.querySelector(`[data-body="${p.id}"]`);
@@ -395,9 +409,15 @@ async function viewThread(id, q) {
     send.onclick = async () => {
       const body = ta.value.trim(); if (!body) return;
       send.disabled = true;
-      const { error } = await sb.from('forum_posts').insert({ thread_id: +id, user_id: state.me.id, body });
+      const { data: pid, error } = await sb.rpc('forum_reply', { p_thread: +id, p_body: body });
       send.disabled = false;
       if (error) return alertBox(error);
+      if (!pid) {   // held for approval
+        ta.value = '';
+        document.getElementById('preview').innerHTML = '<div class="notice">Thanks! Your reply was submitted and will appear once a moderator approves it.</div>';
+        await refreshUnread(); drawChrome('');
+        return;
+      }
       state.me.post_count++;
       if (q.page === 'last') route(); else location.hash = `#/thread/${id}?page=last`;
     };
@@ -427,6 +447,10 @@ async function viewNewTopic(boardId) {
     const { data, error } = await sb.rpc('forum_new_thread', { p_board: +boardId, p_title: title, p_body: body, p_icon: icon });
     e.target.disabled = false;
     if (error) return (document.getElementById('msg').innerHTML = err(error));
+    if (!data) {   // held for approval
+      await refreshUnread(); drawChrome('');
+      return render(crumb([`<a href="#/board/${b.id}">${esc(b.name)}</a>`, 'Topic submitted']) + `<div class="notice">Thanks! Your topic was submitted and will appear once a moderator approves it. <a href="#/board/${b.id}">Back to ${esc(b.name)}</a></div>`);
+    }
     location.hash = `#/thread/${data}`;
   };
 }
@@ -489,18 +513,29 @@ async function ensureProfile() {
   const want = s.user.user_metadata?.forum_username;
   if (want) await sb.from('forum_profiles').insert({ id: s.user.id, username: want });
 }
-function viewSetup() {
+async function viewSetup() {
   drawChrome('setup');
   if (!state.session) return (location.hash = '#/login');
   if (state.me) return (location.hash = '#/');
+  await SPAM.ready;
+  const want = state.session.user.user_metadata?.forum_username || '';
   render(`<div id="msg"></div><table class="tborder form" style="max-width:650px;margin:20px auto"><tr><th colspan="2">Choose your forum username</th></tr>
     <tr><td colspan="2" class="small">You're signed in, but don't have a forum profile yet. Pick a username to finish joining.</td></tr>
-    <tr><td class="lbl">Username:</td><td><input type="text" id="uname" maxlength="20"></td></tr>
+    <tr><td class="lbl">Username:</td><td><input type="text" id="uname" maxlength="20" value="${esc(want)}"></td></tr>
+    ${SPAM.require_captcha ? '<tr><td class="lbl">Human check:</td><td><div id="cap"></div></td></tr>' : ''}
     <tr><td class="lbl"></td><td><button class="btn" id="go">Join the Forum</button></td></tr></table>`);
+  const cap = await Captcha.mount(document.getElementById('cap'));
   document.getElementById('go').onclick = async () => {
-    const u = document.getElementById('uname').value.trim();
-    const { error } = await sb.from('forum_profiles').insert({ id: state.session.user.id, username: u });
-    if (error) return (document.getElementById('msg').innerHTML = err(/unique|duplicate/i.test(error.message) ? 'That username is taken.' : /check/i.test(error.message) ? 'Username must be 3-20 letters, numbers, _ or -.' : error));
+    const u = document.getElementById('uname').value.trim(), msg = document.getElementById('msg');
+    let error;
+    if (SPAM.require_captcha) {
+      if (cap.required && !cap.token()) return (msg.innerHTML = err('Please complete the human check.'));
+      ({ error } = await joinForum(u, cap.token()));
+      if (error) cap.reset();
+    } else {
+      ({ error } = await sb.from('forum_profiles').insert({ id: state.session.user.id, username: u }));
+    }
+    if (error) return (msg.innerHTML = err(/unique|duplicate|taken/i.test(error.message) ? 'That username is taken.' : /check/i.test(error.message) ? 'Username must be 3-20 letters, numbers, _ or -.' : error));
     await loadMe(); location.hash = '#/';
   };
 }
@@ -529,7 +564,7 @@ async function viewProfile(id) {
   if (error) return render(err(error));
   if (!p) return render(err('Member not found.'));
   const r = rank(p), online = new Date(p.last_seen) > since;
-  render(crumb(['Members', esc(p.username)]) + `<table class="tborder"><tr><th colspan="3">View Profile: ${esc(p.username)}</th></tr>
+  render(crumb(['Members', esc(p.username)]) + `<table class="tborder profile"><tr><th colspan="3">View Profile: ${esc(p.username)}</th></tr>
     <tr><td class="w2 ctr" style="width:180px;vertical-align:top">${img(p.avatar_url ? esc(p.avatar_url) : ICON.avatar, 'avatar', 'avatar').replace('<img', '<img style="width:100px;height:100px;object-fit:cover;border:1px solid #000"')}<br><br>
       ${uname(p)}<br><span class="small muted">${esc(r.name)}</span><br>${stars(r.stars)}<br><br>
       ${img(online ? ICON.misc.online : ICON.misc.offline)} <span class="small">${online ? 'Online' : 'Offline'}</span>
@@ -582,7 +617,7 @@ async function viewInbox(q) {
   const { data, error } = await query;
   if (error) return render(err(error));
   render(crumb(['Personal Messages']) + `<div class="btnbar"><div><a class="btn ${box === 'inbox' ? '' : 'grey'}" href="#/pm">Inbox</a> <a class="btn ${box === 'sent' ? '' : 'grey'}" href="#/pm?box=sent">Sent Items</a></div><a class="btn blue" href="#/pm/new">Compose</a></div>
-    <table class="tborder"><tr><th class="icon-col"></th><th>Subject</th><th style="width:150px">${box === 'sent' ? 'To' : 'From'}</th><th style="width:180px">Date</th></tr>
+    <table class="tborder inbox"><tr><th class="icon-col"></th><th>Subject</th><th style="width:150px">${box === 'sent' ? 'To' : 'From'}</th><th style="width:180px">Date</th></tr>
     ${data.length ? data.map((m, i) => { const c = i % 2 ? 'w2' : 'w1'; const unread = box === 'inbox' && !m.is_read; return `<tr class="hl"><td class="${c} icon-col">${img(unread ? ICON.misc.pmnew : ICON.misc.pm)}</td><td class="${c}"><a href="#/pm/${m.id}" style="font-weight:${unread ? 'bold' : 'normal'}">${esc(m.subject)}</a></td><td class="${c}">${uname(box === 'sent' ? m.to : m.from)}</td><td class="${c} small">${fmtDate(m.created_at)}</td></tr>`; }).join('') : `<tr><td colspan="4" class="w1 ctr" style="padding:20px">No messages.</td></tr>`}
     </table>`);
 }
@@ -680,6 +715,7 @@ window.addEventListener('hashchange', route);
     const recovery = /type=recovery/.test(location.hash);
     await sb.auth.getSession(); history.replaceState(null, '', location.pathname + (recovery ? '#/newpass' : '#/'));
   }
+  if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));   // all scripts are loaded
   await Promise.all([loadSite(), loadMe()]);
   booted = true;
   route();

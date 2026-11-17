@@ -94,7 +94,7 @@ async function viewMembers(q) {
       <select id="msort">${sel('posts', sort, 'Most posts')}${sel('name', sort, 'Username A-Z')}${sel('newest', sort, 'Newest members')}${sel('active', sort, 'Recently active')}</select>
       <button class="btn" id="mgo">Search</button>${term || role ? ` <a href="#/members" class="small">Clear</a>` : ''}</td></tr></table>
     <div class="btnbar"><div class="small muted">${count || 0} member${count === 1 ? '' : 's'} found</div><div>${pager(base, page, pages)}</div></div>
-    <table class="tborder"><tr><th class="icon-col"></th><th>Username</th><th>Position</th><th>Location</th><th class="num">Posts</th><th style="width:130px">Joined</th><th style="width:150px">Last Active</th></tr>
+    <table class="tborder members"><tr><th class="icon-col"></th><th>Username</th><th>Position</th><th>Location</th><th class="num">Posts</th><th style="width:130px">Joined</th><th style="width:150px">Last Active</th></tr>
     ${data.length ? data.map((m, i) => { const r = rank(m), c = i % 2 ? 'w2' : 'w1'; return `<tr class="hl"><td class="${c} icon-col">${img(new Date(m.last_seen) > since ? ICON.misc.online : ICON.misc.offline)}</td><td class="${c}">${uname(m)}</td><td class="${c} small">${esc(r.name)} ${stars(r.stars)}</td><td class="${c} small">${esc(m.location || '')}</td><td class="${c} num">${m.post_count}</td><td class="${c} small">${fmtDay(m.created_at)}</td><td class="${c} small">${fmtDate(m.last_seen)}</td></tr>`; }).join('')
       : `<tr><td colspan="7" class="w1 ctr" style="padding:20px">No members match that search.</td></tr>`}
   </table>`);

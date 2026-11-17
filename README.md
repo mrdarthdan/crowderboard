@@ -15,10 +15,13 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
 - **Search** — full-text search across posts and topic titles with phrase/exclude syntax, filters for board, author and titles-only, highlighted snippets, and jump-to-post links; quick search box on every page
 - **Members list** with search by username, filter by position, and sorting
 - **Private messages** with inbox, sent items and reply-with-quote
-- **Moderation** — sticky, lock, move and delete topics; edit/delete any post
+- **Mobile & installable** — responsive phone/tablet layout and a PWA manifest + service worker, so members can "Install app" to their home screen
+- **Spam protection** — new members can't post links/images until they have a few posts (default 3), optional approval queue for their first posts, optional Cloudflare Turnstile human check at sign-up
+- **Moderation** — sticky, lock, move and delete topics; edit/delete any post; members can **Report** a post, staff work a **Reports** queue and an **Approval Queue**, every staff action lands in a **Mod Log**, and bans can carry a reason the member sees
 - **Board moderators** — admins and global moderators can make any member the Moderator of a single board or a whole category; they get moderation powers there only, and are listed under each board on the index
 - **Admin Center**
   - Assign board/category moderators (global moderators get a Mod CP with just this section)
+  - **Spam Protection** settings: link blocking, approval queue, human check
   - Add, rename, reorder and delete categories and boards; staff-only boards (e.g. Announcements)
   - Find any member by name and change their position (Member, Global Moderator, Administrator, Banned) and custom title right from the results
   - **Look & Feel**: forum name, banner (classic text logo, image URL, uploaded JPG, or custom HTML), username colors for each position (Administrator, Global Moderator, Moderator, Member), five theme presets plus 25 color pickers, fonts, custom CSS, and site-wide header/footer HTML — all with live preview
@@ -63,6 +66,10 @@ That's it. Customize everything else from **Admin → Look & Feel** and **Admin 
 | `app.js` | The forum: routing, boards, topics, posting, profiles, PMs, login |
 | `search.js` | Forum search and the searchable Members list |
 | `admin.js` | Admin Center (boards, member roles, Look & Feel) |
+| `mod.js` | Reports, Approval Queue, Mod Log, Spam Protection settings, report dialog, Turnstile human check |
+| `mobile.css` | Phone and tablet layout |
+| `pwa.js`, `sw.js`, `manifest.json`, `icons/` | Installable-app support (edit the names in `manifest.json` for your forum) |
+| `supabase/functions/forum-join/` | Optional edge function that checks the Turnstile token when someone creates their profile |
 | `sql/schema.sql` | Database tables, triggers, functions and row-level security |
 
 The browser talks directly to Supabase. **All permissions are enforced inside the database** with Postgres row-level security, column-level grants and a few `SECURITY DEFINER` functions — hiding a button in the UI is never what keeps someone out. See [SECURITY.md](SECURITY.md) for the model and its known limits.
@@ -81,7 +88,19 @@ When a release adds database changes, run the matching file in [`sql/migrations/
 - `sql/migrations/v1.1_search.sql` — forum and member search (for forums installed with v1.0)
 - `sql/migrations/v1.2_board_mods_banner.sql` — board/category moderators and banner JPG uploads (for forums installed before v1.2)
 
+- `sql/migrations/v1.3_spam_moderation.sql` — reports, approval queue, link blocking, mod log, ban reasons (for forums installed before v1.3)
+
 Username colors need no database change.
+
+### Optional: human check at sign-up (Cloudflare Turnstile)
+
+Link blocking, the approval queue and reports work with no extra setup. To also require a human check:
+
+1. Create a free Turnstile widget at dash.cloudflare.com for your forum's domain.
+2. Deploy `supabase/functions/forum-join` (`supabase functions deploy forum-join`) and set the secret: `supabase secrets set TURNSTILE_SECRET_KEY=...`
+3. In **Admin → Spam Protection**, paste the site key, click *Check human-check setup*, tick *Require it* and Save.
+
+If your Supabase project is shared with other apps, prefer this over Supabase's project-wide CAPTCHA setting, which would apply to every app's sign-ups.
 
 ## Contributing
 

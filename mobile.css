@@ -1,0 +1,77 @@
+/* CrowderBoard: phone and tablet layout. Loaded after style.css. */
+@media (prefers-reduced-motion: reduce) { .loading:before { animation: none; } }
+body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+#footer { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+
+@media (max-width: 800px) {
+  #wrap { width: 100%; min-width: 0; margin: 0; border-left: 0; border-right: 0; box-shadow: none; }
+  #main { padding: 6px; overflow-x: auto; }
+  input[type=text], input[type=email], input[type=password], input[type=url], textarea, select { font-size: 16px; }
+
+  /* banner */
+  #banner.classic-banner { height: 72px !important; }
+  #banner .orb, #banner .orb2 { display: none; }
+  #logo { left: 12px; top: 8px; font-size: 26px; }
+  #tagline { left: 14px; top: 44px; font-size: 10px; }
+  #banner.img-banner { height: auto !important; aspect-ratio: 1080 / 150; }
+  #banner.img-banner a { height: auto !important; }
+  #banner.img-banner img { height: auto !important; object-fit: fill !important; }
+
+  /* nav + welcome bar */
+  #nav { padding: 3px 2px; }
+  #nav a { padding: 8px 9px; font-size: 10px; }
+  #welcome { flex-direction: column; gap: 6px; }
+  .quicksearch input { width: 55%; font-size: 16px; }
+
+  /* tap targets */
+  .btn { padding: 8px 12px; }
+  .btn.sm { padding: 6px 9px; }
+  .pages a, .pages b { padding: 4px 8px; display: inline-block; margin-bottom: 3px; }
+  .toolbar button { min-width: 34px; height: 32px; }
+  .toolbar select { height: 32px; }
+  .smilebar img { margin: 4px; }
+
+  /* board index: forum name + last post only */
+  .idx th:nth-child(3), .idx td:nth-child(3), .idx th:nth-child(4), .idx td:nth-child(4) { display: none; }
+  .idx .icon-col { width: 34px; }
+  .lastpost { width: 36%; }
+  /* topic list: icon, subject, replies, last post */
+  .threads th:nth-child(2), .threads td:nth-child(2), .threads th:nth-child(4), .threads td:nth-child(4),
+  .threads th:nth-child(6), .threads td:nth-child(6) { display: none; }
+  .threads .icon-col { width: 34px; }
+  .num { width: 46px; }
+  /* members list */
+  .members th:nth-child(4), .members td:nth-child(4), .members th:nth-child(6), .members td:nth-child(6),
+  .members th:nth-child(7), .members td:nth-child(7) { display: none; }
+  /* inbox */
+  .inbox th { width: auto !important; }
+
+  /* posts: author strip on top, message below */
+  .post, .post > td { display: block; width: 100%; }
+  .post .ui { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px; }
+  .post .ui .avatar { order: -1; width: 40px; height: 40px; margin: 0; }
+  .post .ui > img:not(.avatar) { display: none; }
+  .post .ui .meta { margin: 0; }
+  .post .ui .meta br { display: none; }
+  .post .ui > div:last-child:not(.meta) { margin: 0 !important; }
+  .post .phead { flex-wrap: wrap; gap: 6px; }
+  .post .ptext { font-size: 13px; min-height: 0; }
+  .quote, .code { margin: 8px 2px; }
+
+  /* forms: label above field */
+  .form tr:has(> td.lbl), .form tr:has(> td.lbl) > td { display: block; width: 100%; }
+  .form td.lbl { padding-bottom: 2px; }
+  .form input[type=text], .form input[type=email], .form input[type=password], .form input[type=url], .form select { width: 100%; }
+  .form[style*="max-width"] { margin: 8px auto !important; }
+
+  /* profile page: stack avatar block above details */
+  .profile tr, .profile > tbody > tr > td { display: block; width: 100% !important; }
+  .profile td:first-child { width: 100% !important; }
+
+  .modbar { line-height: 2.2; }
+  #footer { font-size: 9px; }
+}
+@media (max-width: 480px) {
+  .lastpost { font-size: 9px; width: 32%; }
+  #nav a img { display: none; }
+}
