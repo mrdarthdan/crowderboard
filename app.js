@@ -1,4 +1,4 @@
-/* CrowderBoard v1.4 — a classic message board on Supabase.
+/* CrowderBoard v1.5 — a classic message board on Supabase.
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 const SB_URL = (window.CROWDERBOARD_CONFIG || {}).supabaseUrl;
 const SB_KEY = (window.CROWDERBOARD_CONFIG || {}).supabaseKey;
@@ -494,14 +494,44 @@ async function viewNewTopic(boardId) {
 }
 
 /* ---------- auth views ---------- */
-function viewLogin() {
+/* ---------- social sign-in (v1.5): buttons only show when an admin has enabled them ---------- */
+async function oauthRow() {
+  await SPAM.ready;
+  const g = SPAM.oauth_google, a = SPAM.oauth_apple;
+  if (!g && !a) return '';
+  return `<tr><td class="lbl">Quick sign-in:<div class="muted small">No password needed</div></td><td class="oauthrow">
+    ${g ? '<button type="button" class="btn grey" data-oauth="google">Continue with Google</button>' : ''}
+    ${a ? '<button type="button" class="btn grey" data-oauth="apple">Continue with Apple</button>' : ''}</td></tr>`;
+}
+function wireOauth() {
+  document.querySelectorAll('[data-oauth]').forEach((b) => {
+    b.onclick = async () => {
+      const msg = document.getElementById('msg'); b.disabled = true;
+      // Return to this exact page; the boot code consumes the token in the URL hash and routes to #/setup for new members.
+      const { error } = await sb.auth.signInWithOAuth({ provider: b.dataset.oauth, options: { redirectTo: location.origin + location.pathname } });
+      if (error) { b.disabled = false; msg.innerHTML = err(error); }
+    };
+  });
+}
+/* Turn a provider's display name / email into a legal forum username suggestion (3-20 of A-Za-z0-9_-). */
+function suggestUsername(user) {
+  const m = user?.user_metadata || {};
+  const raw = m.forum_username || m.preferred_username || m.full_name || m.name || (user?.email || '').split('@')[0] || '';
+  const u = String(raw).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-]/g, '').slice(0, 20);
+  return u.length >= 3 ? u : '';
+}
+
+async function viewLogin() {
   drawChrome('login');
-  render(`<div id="msg"></div><table class="tborder form" style="max-width:600px;margin:20px auto"><tr><th colspan="2">Login</th></tr>
+  const oauth = await oauthRow(), pending = window.__authErr; window.__authErr = null;
+  render(`<div id="msg">${pending ? err(pending) : ''}</div><table class="tborder form" style="max-width:600px;margin:20px auto"><tr><th colspan="2">Login</th></tr>
     <tr><td class="lbl">Email:</td><td><input type="email" id="email" autocomplete="email"></td></tr>
     <tr><td class="lbl">Password:</td><td><input type="password" id="pw" autocomplete="current-password"></td></tr>
     <tr><td class="lbl"></td><td><button class="btn" id="go">Login</button> &nbsp; <a href="#" id="forgot" class="small">Forgot your password?</a></td></tr>
+    ${oauth}
     <tr><td colspan="2" class="w2 small ctr">No account yet? <a href="#/register">Register here</a> &mdash; it's free!</td></tr></table>`);
   const msg = document.getElementById('msg');
+  wireOauth();
   const go = async () => {
     const { error } = await sb.auth.signInWithPassword({ email: document.getElementById('email').value.trim(), password: document.getElementById('pw').value });
     if (error) { msg.innerHTML = err(error); return; } await loadMe(); location.hash = '#/';
@@ -515,15 +545,18 @@ function viewLogin() {
     msg.innerHTML = error ? err(error) : '<div class="notice">If that email is registered, a reset link is on its way.</div>';
   };
 }
-function viewRegister() {
+async function viewRegister() {
   drawChrome('register');
+  const oauth = await oauthRow();
   render(`<div id="msg"></div><table class="tborder form" style="max-width:700px;margin:20px auto"><tr><th colspan="2">Register &mdash; ${esc(SITE.name)}</th></tr>
     <tr><td class="lbl">Username:<div class="muted small">3-20 letters, numbers, _ or -</div></td><td><input type="text" id="uname" maxlength="20"></td></tr>
     <tr><td class="lbl">Email:<div class="muted small">Never shown publicly</div></td><td><input type="email" id="email"></td></tr>
     <tr><td class="lbl">Password:<div class="muted small">At least 8 characters</div></td><td><input type="password" id="pw" autocomplete="new-password"></td></tr>
     <tr><td class="lbl">Confirm Password:</td><td><input type="password" id="pw2" autocomplete="new-password"></td></tr>
     <tr><td class="lbl">Forum Rules:</td><td class="small">Be nice. No spam. Keep it family friendly. The staff's decision is final. :)</td></tr>
-    <tr><td class="lbl"></td><td><button class="btn" id="go">Register</button></td></tr></table>`);
+    <tr><td class="lbl"></td><td><button class="btn" id="go">Register</button></td></tr>
+    ${oauth ? oauth.replace('Quick sign-in:', 'Or sign up with:').replace('No password needed', "You'll pick a forum username next") : ''}</table>`);
+  wireOauth();
   document.getElementById('go').onclick = async (e) => {
     const msg = document.getElementById('msg');
     const username = document.getElementById('uname').value.trim(), email = document.getElementById('email').value.trim();
@@ -556,7 +589,7 @@ async function viewSetup() {
   if (!state.session) return (location.hash = '#/login');
   if (state.me) return (location.hash = '#/');
   await SPAM.ready;
-  const want = state.session.user.user_metadata?.forum_username || '';
+  const want = suggestUsername(state.session.user);
   render(`<div id="msg"></div><table class="tborder form" style="max-width:650px;margin:20px auto"><tr><th colspan="2">Choose your forum username</th></tr>
     <tr><td colspan="2" class="small">You're signed in, but don't have a forum profile yet. Pick a username to finish joining.</td></tr>
     <tr><td class="lbl">Username:</td><td><input type="text" id="uname" maxlength="20" value="${esc(want)}"></td></tr>
@@ -753,7 +786,10 @@ window.addEventListener('hashchange', route);
   // Supabase puts auth tokens in the URL hash after email links; let the client consume them first.
   if (/access_token|error_description/.test(location.hash)) {
     const recovery = /type=recovery/.test(location.hash);
-    await sb.auth.getSession(); history.replaceState(null, '', location.pathname + (recovery ? '#/newpass' : '#/'));
+    await sb.auth.getSession();
+    const ed = new URLSearchParams(location.hash.replace(/^#\/?/, '')).get('error_description');   // e.g. provider not enabled / user cancelled
+    if (ed) window.__authErr = 'Sign-in did not complete: ' + ed.replace(/\+/g, ' ');
+    history.replaceState(null, '', location.pathname + (recovery ? '#/newpass' : ed ? '#/login' : '#/'));
   }
   if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));   // all scripts are loaded
   await Promise.all([loadSite(), loadMe()]);

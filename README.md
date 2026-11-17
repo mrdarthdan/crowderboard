@@ -17,6 +17,7 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
 - **Private messages** with inbox, sent items and reply-with-quote
 - **Mobile & installable** — responsive phone/tablet layout and a PWA manifest + service worker, so members can "Install app" to their home screen
 - **Spam protection** — new members can't post links/images until they have a few posts (default 3), optional approval queue for their first posts, optional Cloudflare Turnstile human check at sign-up
+- **Social sign-in (optional)** — "Continue with Google" and "Continue with Apple" buttons on Login and Register, switched on from Admin → Spam Protection once the providers are set up (off by default)
 - **Moderation** — sticky, lock, move and delete topics; edit/delete any post; members can **Report** a post, staff work a **Reports** queue and an **Approval Queue**, every staff action lands in a **Mod Log**, and bans can carry a reason the member sees
 - **Board moderators** — admins and global moderators can make any member the Moderator of a single board or a whole category; they get moderation powers there only, and are listed under each board on the index
 - **Admin Center**
@@ -92,6 +93,7 @@ When a release adds database changes, run the matching file in [`sql/migrations/
 - `sql/migrations/v1.2_board_mods_banner.sql` — board/category moderators and banner JPG uploads (for forums installed before v1.2)
 
 - `sql/migrations/v1.3_spam_moderation.sql` — reports, approval queue, link blocking, mod log, ban reasons (for forums installed before v1.3)
+- `sql/migrations/v1.5_social_login.sql` — Google/Apple sign-in toggles (for forums installed before v1.5)
 
 - v1.4 (search engines) needs no database change.
 
@@ -125,6 +127,35 @@ Link blocking, the approval queue and reports work with no extra setup. To also 
 3. In **Admin → Spam Protection**, paste the site key, click *Check human-check setup*, tick *Require it* and Save.
 
 If your Supabase project is shared with other apps, prefer this over Supabase's project-wide CAPTCHA setting, which would apply to every app's sign-ups.
+
+### Optional: Continue with Google / Apple (v1.5)
+
+The buttons stay hidden until you switch them on, so nothing breaks while you set things up. Do the provider steps first, the toggle last. New members who arrive this way still land on *Choose your forum username* (and the Turnstile check, if you require it), and existing email/password members are unaffected.
+
+**A. Tell Supabase where to send people back** (once, for both providers)
+1. Supabase Dashboard → **Authentication → URL Configuration**.
+2. Under **Redirect URLs**, add your forum's exact address including the trailing slash, e.g. `https://darthdan.vpages.site/crowder-forums/`. Leave **Site URL** alone if other apps share the project.
+
+**B. Google** (free)
+1. [console.cloud.google.com](https://console.cloud.google.com) → create/select a project → **APIs & Services → OAuth consent screen**: External, app name, support email; scopes `email`, `profile`, `openid` (the defaults); publish the app to *Production* so anyone can sign in.
+2. **Credentials → Create credentials → OAuth client ID → Web application**.
+3. Under **Authorized redirect URIs** add Supabase's callback: `https://<your-project-ref>.supabase.co/auth/v1/callback` (Supabase shows it on the Google provider page). Authorized JavaScript origins can stay empty.
+4. Copy the **Client ID** and **Client secret** into Supabase → **Authentication → Providers → Google**, switch it **on**, Save.
+
+**C. Apple** (requires an Apple Developer Program membership, $99/year)
+1. [developer.apple.com](https://developer.apple.com/account) → **Certificates, Identifiers & Profiles → Identifiers**: create an **App ID** with *Sign in with Apple* enabled, then a **Services ID** (this identifier is your *Client ID*, e.g. `com.yourname.crowderboard`).
+2. Open the Services ID → enable *Sign in with Apple* → **Configure**: Primary App ID = the one above; **Domains** = `<your-project-ref>.supabase.co`; **Return URLs** = `https://<your-project-ref>.supabase.co/auth/v1/callback`.
+3. **Keys** → create a key with *Sign in with Apple* enabled; download the `.p8` file (one-time download) and note the **Key ID** and your **Team ID**.
+4. Apple wants a signed *client secret* (JWT) rather than a plain secret. Generate it from the `.p8`, Key ID, Team ID and Services ID with the generator linked on Supabase's Apple provider page ([docs](https://supabase.com/docs/guides/auth/social-login/auth-apple)).
+5. Paste the Services ID as **Client ID** and the generated JWT as **Secret Key** into Supabase → **Authentication → Providers → Apple**, switch it **on**, Save.
+6. **Apple client secrets expire after at most 6 months.** Put a reminder in your calendar to generate a new one and paste it in again, or Apple sign-in will quietly stop working. Apple also only shares the member's name on first sign-in, so the username box may be pre-filled from their email instead.
+
+**D. Switch the buttons on**
+1. Run `sql/migrations/v1.5_social_login.sql` once (SQL Editor), if your forum predates v1.5.
+2. Sign in as an admin → **Admin → Spam Protection → Social sign-in buttons**, tick **Google** and/or **Apple**, Save.
+3. Test in a private window. If a button shows an error page, the provider isn't enabled in Supabase yet; untick it and go back to step B or C.
+
+Shared project note: Supabase providers are project-wide, so enabling Google or Apple also lets those sign-ins work for other apps that share this project. Email addresses that already have a password account are linked to the same user, so existing members keep their forum profile.
 
 ## Contributing
 

@@ -3,12 +3,13 @@
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE.  Loaded after app.js. */
 
 /* ---------- spam settings (public, loaded once) ---------- */
-const SPAM = { require_captcha: false, turnstile: '', approval: 0, link_block: 3, ready: null };
+const SPAM = { require_captcha: false, turnstile: '', approval: 0, link_block: 3, oauth_google: false, oauth_apple: false, ready: null };
 SPAM.ready = (async () => {
   try {
     const { data } = await sb.from('forum_spam_settings').select('*').eq('id', 1).maybeSingle();
     if (data) Object.assign(SPAM, { require_captcha: !!data.require_captcha, turnstile: data.turnstile_site_key || '',
-      approval: data.approval_posts, link_block: data.link_block_posts });
+      approval: data.approval_posts, link_block: data.link_block_posts,
+      oauth_google: !!data.oauth_google, oauth_apple: !!data.oauth_apple });
   } catch (e) { /* forum not upgraded to v1.3 yet: features stay off */ }
 })();
 
@@ -209,19 +210,22 @@ async function viewAdminSpam() {
       <td><label><input type="checkbox" id="sp_cap"${s.require_captcha ? ' checked' : ''}> Require it</label></td></tr>
     <tr><td class="lbl">Turnstile site key:<div class="muted small">The public key from your Cloudflare Turnstile widget.</div></td>
       <td><input type="text" id="sp_key" maxlength="100" value="${esc(s.turnstile_site_key || '')}" placeholder="0x4AAAAAAA..."></td></tr>
+    <tr><td class="lbl">Social sign-in buttons:<div class="muted small">Show &ldquo;Continue with Google / Apple&rdquo; on the Login and Register pages. Leave OFF until the provider is set up (see README).</div></td>
+      <td><label><input type="checkbox" id="sp_goog"${s.oauth_google ? ' checked' : ''}> Google</label> &nbsp; <label><input type="checkbox" id="sp_apple"${s.oauth_apple ? ' checked' : ''}> Apple</label>
+        <div class="muted small">New members who sign in this way still pick a forum username and pass the human check above if it is on.</div></td></tr>
     <tr><td class="lbl"></td><td><button class="btn" id="sp_save">Save</button> <button class="btn grey" id="sp_check">Check human-check setup</button> <span id="sp_status" class="small"></span></td></tr>
     <tr><td colspan="2" class="w2 small">To use the human check: (1) create a free Turnstile widget at dash.cloudflare.com for your forum's domain, (2) deploy the <b>forum-join</b> edge function and add the secret key as <b>TURNSTILE_SECRET_KEY</b> (see the README), (3) paste the site key above, use <b>Check setup</b>, then tick &ldquo;Require it&rdquo; and Save. Leave it off if you share this Supabase project with other apps and haven't set that up &mdash; link blocking, the approval queue and reports work without it.</td></tr></table>`);
   const $ = (id) => document.getElementById(id);
   const num = (id) => Math.min(50, Math.max(0, parseInt($(id).value, 10) || 0));
   $('sp_save').onclick = async (ev) => {
-    const row = { link_block_posts: num('sp_links'), approval_posts: num('sp_hold'), require_captcha: $('sp_cap').checked,
+    const row = { link_block_posts: num('sp_links'), approval_posts: num('sp_hold'), require_captcha: $('sp_cap').checked, oauth_google: $('sp_goog').checked, oauth_apple: $('sp_apple').checked,
       turnstile_site_key: $('sp_key').value.trim() || null, updated_at: new Date().toISOString(), updated_by: state.me.id };
     if (row.require_captcha && !row.turnstile_site_key) return ($('msg').innerHTML = err('Enter your Turnstile site key before requiring the human check.'));
     ev.target.disabled = true;
     const { error } = await sb.from('forum_spam_settings').update(row).eq('id', 1);
     ev.target.disabled = false;
     if (error) return ($('msg').innerHTML = err(error));
-    Object.assign(SPAM, { link_block: row.link_block_posts, approval: row.approval_posts, require_captcha: row.require_captcha, turnstile: row.turnstile_site_key || '' });
+    Object.assign(SPAM, { link_block: row.link_block_posts, approval: row.approval_posts, require_captcha: row.require_captcha, turnstile: row.turnstile_site_key || '', oauth_google: row.oauth_google, oauth_apple: row.oauth_apple });
     $('msg').innerHTML = '<div class="notice"><b>Saved.</b></div>'; window.scrollTo(0, 0);
   };
   $('sp_check').onclick = async () => {

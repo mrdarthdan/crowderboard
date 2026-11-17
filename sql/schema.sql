@@ -577,6 +577,8 @@ create table public.forum_spam_settings (
   id int primary key default 1 check (id = 1),
   require_captcha boolean not null default false,
   turnstile_site_key text check (turnstile_site_key is null or char_length(turnstile_site_key) <= 100),
+  oauth_google boolean not null default false,   -- v1.5: show 'Continue with Google'
+  oauth_apple  boolean not null default false,   -- v1.5: show 'Continue with Apple'
   approval_posts int not null default 0 check (approval_posts between 0 and 50),      -- first N posts of a new member are held for review (0 = off)
   link_block_posts int not null default 3 check (link_block_posts between 0 and 50),  -- members with fewer than N posts can't post links/images (0 = off)
   updated_at timestamptz not null default now(),
@@ -950,8 +952,11 @@ create or replace function public.forum_spam_settings_log() returns trigger
 language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   perform forum_log('settings.spam', null, null,
-    format('hold first %s posts; links need %s posts; human check %s', new.approval_posts, new.link_block_posts,
-           case when new.require_captcha then 'required' else 'off' end));
+    format('hold first %s posts; links need %s posts; human check %s; Google sign-in %s; Apple sign-in %s',
+           new.approval_posts, new.link_block_posts,
+           case when new.require_captcha then 'required' else 'off' end,
+           case when new.oauth_google then 'on' else 'off' end,
+           case when new.oauth_apple then 'on' else 'off' end));
   return null;
 end $$;
 create trigger forum_spam_settings_log after update on public.forum_spam_settings for each row execute function public.forum_spam_settings_log();
@@ -990,7 +995,7 @@ create policy "own or staff pending" on public.forum_pending for select to authe
 revoke all on public.forum_spam_settings, public.forum_modlog, public.forum_bans, public.forum_reports, public.forum_pending
   from anon, authenticated;
 grant select on public.forum_spam_settings to anon, authenticated;
-grant update (require_captcha, turnstile_site_key, approval_posts, link_block_posts, updated_at, updated_by)
+grant update (require_captcha, turnstile_site_key, oauth_google, oauth_apple, approval_posts, link_block_posts, updated_at, updated_by)
   on public.forum_spam_settings to authenticated;                                  -- admins only, via RLS
 grant select on public.forum_modlog, public.forum_bans, public.forum_reports, public.forum_pending to authenticated;
 
