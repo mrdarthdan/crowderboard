@@ -536,7 +536,8 @@ async function viewSetup() {
       ({ error } = await sb.from('forum_profiles').insert({ id: state.session.user.id, username: u }));
     }
     if (error) return (msg.innerHTML = err(/unique|duplicate|taken/i.test(error.message) ? 'That username is taken.' : /check/i.test(error.message) ? 'Username must be 3-20 letters, numbers, _ or -.' : error));
-    await loadMe(); location.hash = '#/';
+    await loadMe();
+    if (location.hash === '#/' || location.hash === '') route(); else location.hash = '#/';
   };
 }
 function viewNewPass() {
