@@ -25,6 +25,7 @@ No PHP, no server to maintain: upload a folder of HTML/CSS/JS anywhere that host
   - Add, rename, reorder and delete categories and boards; staff-only boards (e.g. Announcements)
   - Find any member by name and change their position (Member, Global Moderator, Administrator, Banned) and custom title right from the results
   - **Look & Feel**: forum name, banner (classic text logo, image URL, uploaded JPG, or custom HTML), username colors for each position (Administrator, Global Moderator, Moderator, Member), five theme presets plus 25 color pickers, fonts, custom CSS, and site-wide header/footer HTML — all with live preview
+- **Search-engine friendly (v1.4)** — crawlable twin pages for every topic and board (title, description, canonical, Open Graph, post text), a sitemap, a *Share link* on topics, and page metadata that follows the topic you're viewing. See [Search engines](#search-engines-v14)
 - Original period-style icon set (folders, message icons, smilies) drawn as inline SVG — no image files to host
 
 ## Requirements
@@ -69,6 +70,8 @@ That's it. Customize everything else from **Admin → Look & Feel** and **Admin 
 | `mod.js` | Reports, Approval Queue, Mod Log, Spam Protection settings, report dialog, Turnstile human check |
 | `mobile.css` | Phone and tablet layout |
 | `pwa.js`, `sw.js`, `manifest.json`, `icons/` | Installable-app support (edit the names in `manifest.json` for your forum) |
+| `tools/prerender.mjs` | Writes crawlable `t/<id>.html`, `b/<id>.html` and `sitemap.xml` for static hosts (v1.4) |
+| `supabase/functions/forum-seo/` | Optional read-only edge function that serves the same pages live, plus `sitemap.xml` and `robots.txt` (v1.4) |
 | `supabase/functions/forum-join/` | Optional edge function that checks the Turnstile token when someone creates their profile |
 | `sql/schema.sql` | Database tables, triggers, functions and row-level security |
 
@@ -90,7 +93,28 @@ When a release adds database changes, run the matching file in [`sql/migrations/
 
 - `sql/migrations/v1.3_spam_moderation.sql` — reports, approval queue, link blocking, mod log, ban reasons (for forums installed before v1.3)
 
+- v1.4 (search engines) needs no database change.
+
 Username colors need no database change.
+
+### Search engines (v1.4)
+
+Crawlers ignore everything after the `#` in a URL, so `#/thread/12` pages can't be indexed. v1.4 gives each public topic and board a crawlable twin page that shows the title, description, canonical URL, Open Graph tags and post text. People who open a twin page are sent straight on to the real forum (`#/thread/12`); crawlers and link-preview bots stay on the twin. Only content a logged-out visitor can read is used — the pages are built with your *publishable* key, so Postgres row-level security decides what appears. No database changes are needed.
+
+**Option A — static pages (works on any static host).**
+
+1. Run `node tools/prerender.mjs --base https://your-site/forum/` (Node 18+; reads `config.js`). It writes `t/<id>.html`, `b/<id>.html` and `sitemap.xml`. Use `--out <dir>` to write somewhere else, or `--input data.json` to build from an exported snapshot instead of fetching.
+2. Upload `t/`, `b/` and `sitemap.xml` next to `index.html`.
+3. In `config.js` add `shareMode: 'static'`. Topics now show a **Share link** (click to copy) and the app sets `<link rel="canonical">`, the page title/description and Open Graph tags to match the twin page while a topic or board is open.
+4. Submit `https://your-site/forum/sitemap.xml` in Google Search Console and Bing Webmaster Tools. (A `robots.txt` only counts at the root of a domain, so on a sub-folder install the sitemap has to be submitted by hand.)
+
+Re-run the script whenever you want search engines to see new posts (a cron job or CI step works well). A topic's static page carries its first 60 posts.
+
+**Option B — live edge function (`supabase/functions/forum-seo`).** Serves `/thread/<id>`, `/board/<id>`, `/sitemap.xml` and `/robots.txt` on demand, so new posts are visible immediately. Deploy with `supabase functions deploy forum-seo --no-verify-jwt`, set the secret `supabase secrets set FORUM_APP_URL=https://your-site/forum/` (or edit `DEFAULT_APP_URL` in the file), and add `shareMode: 'edge'` to `config.js`.
+
+> **Important:** on the default `*.supabase.co` address, Supabase rewrites `text/html` responses to `text/plain`, so the HTML pages only render properly on a **custom domain** (a paid Supabase add-on) or when the function is proxied through your own domain/CDN. The sitemap and robots endpoints are unaffected. If you don't have one, use Option A.
+
+Neither option can offer path-style routing for the app itself (`/thread/12` instead of `#/thread/12`) on a plain static host, because that needs the server to return `index.html` for unknown paths. The twin-page URLs (`t/12.html`) are the static-host equivalent.
 
 ### Optional: human check at sign-up (Cloudflare Turnstile)
 

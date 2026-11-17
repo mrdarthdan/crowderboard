@@ -1,4 +1,4 @@
-/* CrowderBoard v1.3 — a classic message board on Supabase.
+/* CrowderBoard v1.4 — a classic message board on Supabase.
    Copyright (c) 2026 Dan Crowder. MIT License — see LICENSE. */
 const SB_URL = (window.CROWDERBOARD_CONFIG || {}).supabaseUrl;
 const SB_KEY = (window.CROWDERBOARD_CONFIG || {}).supabaseKey;
@@ -12,6 +12,37 @@ const sb = supabase.createClient(SB_URL, SB_KEY);
 const state = { session: null, me: null, myMods: [], modCounts: { reports: 0, pending: 0 }, myPending: 0, banReason: null, unreadThreads: new Set(), unreadBoards: new Set(), pmUnread: 0, lastSeenPing: 0 };
 const $main = document.getElementById('main');
 const PROF = 'id,username,role,avatar_url,post_count,title';
+
+/* ================= SEO: share links + page metadata (v1.4) ================= */
+/* Crawlers ignore #hash routes, so each topic/board also has a crawlable twin page:
+     shareMode 'static' -> t/<id>.html and b/<id>.html next to index.html (made by tools/prerender.mjs)
+     shareMode 'edge'   -> <supabaseUrl>/functions/v1/forum-seo/thread/<id> (needs a custom domain; see README)
+   Unset = no share links, and no canonical tag. */
+function shareUrl(kind, id) {
+  const m = (window.CROWDERBOARD_CONFIG || {}).shareMode;
+  if (m === 'static') return new URL(`${kind === 'thread' ? 't' : 'b'}/${id}.html`, location.href.split('#')[0].replace(/[^/]*$/, '')).href;
+  if (m === 'edge') return `${SB_URL}/functions/v1/forum-seo/${kind}/${id}`;
+  return null;
+}
+function setHead(sel, make, attr, val) {
+  let el = document.head.querySelector(sel);
+  if (val == null) { el?.remove(); return; }
+  if (!el) { el = make(); document.head.appendChild(el); }
+  el.setAttribute(attr, val);
+}
+const metaTag = (k, v) => () => { const m = document.createElement('meta'); m.setAttribute(k, v); return m; };
+function setPageMeta(title, desc, canonical) {
+  document.title = title;
+  setHead('meta[name="description"]', metaTag('name', 'description'), 'content', desc || null);
+  setHead('meta[property="og:title"]', metaTag('property', 'og:title'), 'content', desc != null ? title : null);
+  setHead('meta[property="og:description"]', metaTag('property', 'og:description'), 'content', desc || null);
+  setHead('meta[property="og:type"]', metaTag('property', 'og:type'), 'content', desc != null ? 'article' : null);
+  setHead('meta[property="og:url"]', metaTag('property', 'og:url'), 'content', canonical || null);
+  setHead('link[rel="canonical"]', () => { const l = document.createElement('link'); l.rel = 'canonical'; return l; }, 'href', canonical || null);
+}
+const resetPageMeta = () => setPageMeta((SITE.name || 'Forum') + ' Forums', null, null);
+const metaText = (s) => String(s ?? '').replace(/\[quote(?:=[^\]]*)?\][\s\S]*?\[\/quote\]/gi, ' ').replace(/\[img\][\s\S]*?\[\/img\]/gi, ' ')
+  .replace(/\[\/?[a-z*]+(?:=[^\]]*)?\]/gi, ' ').replace(/\s+/g, ' ').trim();
 
 /* ================= helpers ================= */
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -282,6 +313,7 @@ async function viewBoard(id, q) {
   if (b.error || t.error) return render(err(b.error || t.error));
   if (!b.data) return render(err('That board does not exist.'));
   const board = b.data, pages = Math.max(1, Math.ceil((t.count || 0) / TOPICS_PER_PAGE));
+  setPageMeta(`${board.name} - ${SITE.name}`, (board.description || `Topics in ${board.name}`).slice(0, 160), shareUrl('board', board.id));
   const canNew = canPost() && (!board.mod_only_threads || canModBoard(board.id, board.category_id));
   const bar = `<div class="btnbar"><div>${pager(`#/board/${id}`, page, pages)}</div><div>${canNew ? `<a class="btn" href="#/new/${id}">New Topic</a>` : (!state.me ? '<a class="btn grey" href="#/login">Login to post</a>' : '')}</div></div>`;
   let html = crumb([`<a href="#/board/${id}">${esc(board.name)}</a>`]) + bar;
@@ -319,11 +351,13 @@ async function viewThread(id, q) {
     state.unreadThreads.delete(+id);
   }
   const firstPostId = page === 1 && posts[0] ? posts[0].id : null;
+  { const d = metaText(posts[0]?.body) || th.title; setPageMeta(`${th.title} - ${th.board.name} - ${SITE.name}`, d.length > 160 ? d.slice(0, 157).replace(/\s+\S*$/, '') + '…' : d, shareUrl('thread', id)); }
+  const share = shareUrl('thread', id);
   const bm = canModBoard(th.board.id, th.board.category_id);
   const canReply = canPost() && (!th.locked || bm);
   const bar = `<div class="btnbar"><div>${pager(`#/thread/${id}`, page, pages)}</div><div>${canReply ? `<a class="btn" href="#" data-act="jump-reply">Reply</a>` : th.locked ? '<span class="btn grey" disabled>Locked</span>' : (!state.me ? '<a class="btn grey" href="#/login">Login to reply</a>' : '')}</div></div>`;
   let html = crumb([`<a href="#/board/${th.board.id}">${esc(th.board.name)}</a>`, `<a href="#/thread/${id}">${esc(th.title)}</a>`]) + bar;
-  html += `<table class="tborder"><tr><th colspan="2">${img(ICON.msg[th.icon] || ICON.msg.default)} Topic: ${esc(th.title)} &nbsp;<span style="font-weight:normal">(Read ${th.view_count + 1} times)</span>${th.locked ? ' &nbsp;' + img(ICON.topic.locked, 'Locked') : ''}</th></tr>`;
+  html += `<table class="tborder"><tr><th colspan="2">${img(ICON.msg[th.icon] || ICON.msg.default)} Topic: ${esc(th.title)} &nbsp;<span style="font-weight:normal">(Read ${th.view_count + 1} times)</span>${share ? ` &nbsp;<a class="small" href="${esc(share)}" data-share="${esc(share)}" title="Link you can share or post elsewhere">Share link</a>` : ''}${th.locked ? ' &nbsp;' + img(ICON.topic.locked, 'Locked') : ''}</th></tr>`;
   posts.forEach((p, i) => {
     const a = p.author, r = a ? rank(a) : { name: 'Deleted user', stars: 0 };
     const mine = state.me && a && a.id === state.me.id;
@@ -363,6 +397,10 @@ async function viewThread(id, q) {
   render(html);
   wireEditor();
   const ta = document.getElementById('ta_reply');
+  $main.querySelectorAll('[data-share]').forEach(a => a.onclick = async (e) => {
+    e.preventDefault();
+    try { await navigator.clipboard.writeText(a.dataset.share); a.textContent = 'Link copied!'; } catch { prompt('Copy this link:', a.dataset.share); }
+  });
   $main.querySelectorAll('[data-act="jump-reply"]').forEach(a => a.onclick = (e) => { e.preventDefault(); ta?.scrollIntoView({ behavior: 'smooth' }); ta?.focus(); });
   if (q.page === 'last' && posts.length) document.getElementById('p' + posts[posts.length - 1].id)?.scrollIntoView();
   if (q.post) { const hit = document.getElementById('p' + q.post); if (hit) { hit.classList.add('hit'); hit.scrollIntoView({ block: 'center' }); } }
@@ -676,6 +714,7 @@ async function route() {
   const [path, qs] = raw.split('?');
   const q = Object.fromEntries(new URLSearchParams(qs || ''));
   pingSeen();
+  resetPageMeta();
   // Re-read my profile on every page so role changes (admin/mod/ban) apply without a reload.
   if (state.session) { const { data: p } = await sb.from('forum_profiles').select('*').eq('id', state.session.user.id).maybeSingle(); state.me = p; await loadMyMods(); }
   if (state.session && !state.me && !['#/setup', '#/newpass'].includes(path)) { await ensureProfile(); await loadMe(); if (!state.me) return viewSetup(); }
